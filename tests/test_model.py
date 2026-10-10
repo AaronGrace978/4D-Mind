@@ -60,7 +60,7 @@ def test_soft_prompt_labels_ignore_the_prefix():
     token_embeds = torch.randn(2, 6, 8)
     attention = torch.tensor([[1, 1, 1, 1, 1, 0], [1, 1, 1, 1, 0, 0]])
     ids = torch.tensor([[3, 4, 5, 6, 7, 0], [3, 4, 5, 8, 0, 0]])
-    labels = labels_from_prompt_lens(ids, [2, 3], pad_id=0)
+    labels = labels_from_prompt_lens(ids, [2, 3], attention)
     inputs, full_attn, full_labels = attach_soft_prompts(soft, token_embeds, attention, labels)
     assert inputs.shape == (2, 10, 8)
     assert torch.all(full_labels[:, :4] == -100)

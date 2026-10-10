@@ -36,32 +36,72 @@ def attach_soft_prompts(soft, token_embeds, attention_mask, labels):
     return inputs, attention, full_labels
 
 
-def labels_from_prompt_lens(input_ids: torch.Tensor, prompt_lens: list[int], pad_id: int) -> torch.Tensor:
+def labels_from_prompt_lens(
+    input_ids: torch.Tensor, prompt_lens: list[int], attention: torch.Tensor
+) -> torch.Tensor:
+    """Train on the answer only. Padding is found from `attention`, not a pad id,
+    because some tokenizers pad with the same id that ends the answer."""
     labels = input_ids.clone()
     for row, length in enumerate(prompt_lens):
         labels[row, : int(length)] = -100
-    labels[input_ids == pad_id] = -100
+    labels[attention == 0] = -100
     return labels
 
 
+def _token_ids(tokenizer, text: str) -> list[int]:
+    return list(tokenizer(text, add_special_tokens=False)["input_ids"])
+
+
 def _chat_ids(tokenizer, query: str, answer: str | None) -> tuple[list[int], int]:
+    # Render to text first: transformers 5 returns a dict from apply_chat_template(tokenize=True).
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": query},
     ]
-    prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True)
+    prompt = _token_ids(tokenizer, tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
     if answer is None:
-        return list(prompt), len(prompt)
-    full = tokenizer.apply_chat_template(
-        messages + [{"role": "assistant", "content": answer}],
-        tokenize=True,
+        return prompt, len(prompt)
+    full = _token_ids(
+        tokenizer,
+        tokenizer.apply_chat_template(
+            messages + [{"role": "assistant", "content": answer}],
+            tokenize=False,
+        ),
     )
-    prompt = list(prompt)
-    full = list(full)
     if full[: len(prompt)] == prompt:
         return full, len(prompt)
-    answer_ids = tokenizer(answer, add_special_tokens=False).input_ids
-    return full, max(len(full) - len(answer_ids), 0)
+    return full, max(len(full) - len(_token_ids(tokenizer, answer)), 0)
+
+
+def dtype_kwargs(dtype: torch.dtype) -> dict:
+    """`dtype=` on transformers 4.56 and later, `torch_dtype=` before that."""
+    import transformers
+
+    major, minor = (int(part) for part in transformers.__version__.split(".")[:2])
+    return {"dtype": dtype} if (major, minor) >= (4, 56) else {"torch_dtype": dtype}
+
+
+def match_embedding_scale(bridge: torch.nn.Linear, language) -> None:
+    """Start soft prompts at the size of real token embeddings.
+
+    A default init makes them far larger than any word the language model has
+    seen, and the first steps spend themselves shrinking the bridge.
+    """
+    with torch.no_grad():
+        target = float(language.get_input_embeddings().weight.float().std())
+        torch.nn.init.normal_(bridge.weight, std=target / max(bridge.in_features, 1) ** 0.5)
+        torch.nn.init.zeros_(bridge.bias)
+
+
+def stop_ids(tokenizer) -> set[int]:
+    ids = set()
+    if tokenizer.eos_token_id is not None:
+        ids.add(int(tokenizer.eos_token_id))
+    for token in ("<|im_end|>", "<|endoftext|>"):
+        found = tokenizer.convert_tokens_to_ids(token)
+        if isinstance(found, int) and found != tokenizer.unk_token_id and found >= 0:
+            ids.add(found)
+    return ids
 
 
 def precompute_latents(model, volumes: list[np.ndarray], device, batch_size: int = 2) -> torch.Tensor:
@@ -82,7 +122,7 @@ def _load_language_model(model_name: str):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    language = AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.bfloat16, device_map="auto")
+    language = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto", **dtype_kwargs(torch.bfloat16))
     language = get_peft_model(
         language,
         LoraConfig(
@@ -126,6 +166,7 @@ def train_voice(
     language, tokenizer = _load_language_model(model_name)
     encoder.set_lm_hidden(int(language.config.hidden_size))
     bridge = encoder.soft.to(device)
+    match_embedding_scale(bridge, language)
     bridge.train()
     examples = [(index, key) for index in range(len(metas)) for key in QUERY_TEXT]
     examples.extend((0, key) for _ in range(3) for key in QUERY_TEXT)
@@ -137,7 +178,7 @@ def train_voice(
     )
     rng = np.random.default_rng(seed)
     language.train()
-    pad_id = int(tokenizer.pad_token_id)
+    pad_id = int(tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
     for step in range(1, steps + 1):
         pick = rng.integers(0, len(examples), size=lm_batch)
         ids_batch = []
@@ -158,7 +199,7 @@ def train_voice(
         lm_device = _lm_device(language)
         input_ids = input_ids.to(lm_device)
         attn = attn.to(lm_device)
-        labels = labels_from_prompt_lens(input_ids, prompt_lens, pad_id)
+        labels = labels_from_prompt_lens(input_ids, prompt_lens, attn)
         latent = torch.stack(latent_rows).to(device=bridge.weight.device, dtype=bridge.weight.dtype)
         soft = bridge(latent).view(lm_batch, cfg.n_soft_prompts, encoder.cfg.lm_hidden)
         token_embeds = language.get_input_embeddings()(input_ids)
@@ -203,14 +244,14 @@ def generate_from_latent(language, tokenizer, bridge, latent: torch.Tensor, quer
     soft = soft.view(1, n_soft, hidden).to(device=embeds.device, dtype=embeds.dtype)
     inputs = torch.cat([soft, embeds], dim=1)
     attention = torch.ones(inputs.shape[:2], dtype=torch.long, device=embeds.device)
-    eos = tokenizer.eos_token_id
+    stops = stop_ids(tokenizer)
     made: list[int] = []
     for _ in range(max_new_tokens):
         logits = language(inputs_embeds=inputs, attention_mask=attention).logits[:, -1]
         nxt = int(logits.argmax(dim=-1).item())
-        made.append(nxt)
-        if eos is not None and nxt == int(eos):
+        if nxt in stops:
             break
+        made.append(nxt)
         nxt_embed = language.get_input_embeddings()(torch.tensor([[nxt]], device=embeds.device))
         inputs = torch.cat([inputs, nxt_embed], dim=1)
         attention = torch.ones(inputs.shape[:2], dtype=torch.long, device=embeds.device)
