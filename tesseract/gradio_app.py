@@ -11,16 +11,14 @@ from tesseract.voice_text import QUERY_TEXT, describe
 
 
 def _figure_image(draw) -> np.ndarray:
-    import matplotlib
+    # A bare Agg canvas, so the notebook's inline pyplot backend is left alone.
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
-    matplotlib.use("Agg", force=False)
-    import matplotlib.pyplot as plt
-
-    fig = draw(plt)
-    fig.canvas.draw()
-    image = np.asarray(fig.canvas.buffer_rgba())[:, :, :3].copy()
-    plt.close(fig)
-    return image
+    fig = draw(Figure)
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    return np.asarray(canvas.buffer_rgba())[:, :, :3].copy()
 
 
 def render_projection(volume: np.ndarray, angle_deg: float) -> np.ndarray:
@@ -28,14 +26,14 @@ def render_projection(volume: np.ndarray, angle_deg: float) -> np.ndarray:
     if len(points) == 0:
         points = np.zeros((1, 9), dtype=np.float32)
 
-    def draw(plt):
+    def draw(Figure):
         angle = np.deg2rad(angle_deg)
         x = points[:, 0] - 0.5
         y = points[:, 1] - 0.5
         t = points[:, 3] - 0.5
         xr = x * np.cos(angle) - t * np.sin(angle)
         tr = x * np.sin(angle) + t * np.cos(angle)
-        fig = plt.figure(figsize=(6.2, 5.4), facecolor="#07080b")
+        fig = Figure(figsize=(6.2, 5.4), facecolor="#07080b")
         ax = fig.add_subplot(111, projection="3d")
         ax.set_facecolor("#07080b")
         scar = points[:, 7] > 0.45
@@ -94,12 +92,12 @@ def build_interface(resident_ckpt: str, causal_ckpt: str | None = None, lora_dir
         from peft import PeftModel
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        from tesseract.lora_voice import generate_from_latent
+        from tesseract.lora_voice import dtype_kwargs, generate_from_latent
 
         bridge_blob = torch.load(Path(lora_dir) / "bridge.pt", map_location="cpu", weights_only=False)
         tokenizer = AutoTokenizer.from_pretrained(lora_dir)
         base = AutoModelForCausalLM.from_pretrained(
-            bridge_blob["base"], torch_dtype=torch.bfloat16, device_map="auto"
+            bridge_blob["base"], device_map="auto", **dtype_kwargs(torch.bfloat16)
         )
         language = PeftModel.from_pretrained(base, lora_dir)
         language.eval()

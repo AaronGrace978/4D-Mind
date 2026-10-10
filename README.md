@@ -26,6 +26,10 @@ PRESET = "session"  # one sitting
 
 `session` is the short run. `long` multiplies the step counts. The notebook checks for a GPU, mounts Drive, trains all three stages, prints eval scores, exports Iris, and opens a Gradio view: rotate time into x, cut the solid, read the resident and the witness.
 
+With `RESUME = True` (the default), any stage whose checkpoint is already in `MyDrive/4d-mind/` is skipped, so after a disconnect, **Runtime > Run all** continues from the stage that did not finish. The install cell removes Colab's preinstalled `torchao`, because current `peft` refuses to build LoRA layers next to it.
+
+The notebook is generated. Edit `notebooks/build_notebook.py`, then run `python3 notebooks/build_notebook.py`.
+
 ## Local viewer
 
 The page draws the worldtube without loading Qwen. Speech stays on the Colab GPU.
@@ -62,6 +66,6 @@ The CPU tests use the `tiny` preset. They check Iris’s geometry (the two ends 
 | `tesseract/eval.py` | Early vs late slice error, interior error, rotation cosine |
 | `tesseract/demo.py`, `web/` | Local viewer |
 | `tesseract/gradio_app.py` | Colab instrument |
-| `notebooks/4d_mind_a100.ipynb` | The A100 entry point |
+| `notebooks/4d_mind_a100.ipynb` | The A100 entry point, written by `notebooks/build_notebook.py` |
 
 `python3 -m tesseract.train --config a100` and `python3 -m tesseract.finetune --ckpt checkpoints/eternalist.pt` are the same functions the notebook calls.

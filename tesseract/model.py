@@ -11,6 +11,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from tesseract.config import TrainConfig
 
@@ -42,8 +43,7 @@ class Attention(nn.Module):
         qkv = self.qkv(hidden).reshape(batch, tokens, 3, self.heads, self.head_dim)
         qkv = qkv.permute(2, 0, 3, 1, 4)
         query, key, value = qkv[0], qkv[1], qkv[2]
-        mask = None if attn_mask is None else attn_mask.to(dtype=query.dtype)
-        mixed = F.scaled_dot_product_attention(query, key, value, attn_mask=mask)
+        mixed = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask)
         mixed = mixed.transpose(1, 2).reshape(batch, tokens, channels)
         return self.proj(mixed)
 
@@ -175,13 +175,16 @@ class Eternalist(nn.Module):
             mask[:, 0] = False
         return mask.to(device)
 
-    def attention_mask(self, causal: bool, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        mask = torch.zeros(self.n_tokens, self.n_tokens, device=device, dtype=dtype)
-        if causal:
-            time_index = self.t_index
-            blocked = time_index.unsqueeze(0) > time_index.unsqueeze(1)
-            mask = mask.masked_fill(blocked, float("-inf"))
-        return mask
+    def attention_mask(self, causal: bool, device: torch.device) -> torch.Tensor | None:
+        """`None` for the resident, so SDPA can use its fused kernels.
+
+        The witness gets a boolean mask: True where a query may look, which is
+        any key at the same time or earlier.
+        """
+        if not causal:
+            return None
+        time_index = self.t_index.to(device)
+        return time_index.unsqueeze(0) <= time_index.unsqueeze(1)
 
     @property
     def t_index(self) -> torch.Tensor:
@@ -200,12 +203,10 @@ class Eternalist(nn.Module):
         if patch_mask is not None:
             token = self.mask_token.to(dtype=hidden.dtype, device=hidden.device).expand_as(hidden)
             hidden = torch.where(patch_mask.unsqueeze(-1), token, hidden)
-        attn_mask = self.attention_mask(causal, hidden.device, hidden.dtype)
+        attn_mask = self.attention_mask(causal, hidden.device)
         for block in self.blocks:
             if self.training and self.cfg.grad_checkpoint:
-                hidden = torch.utils.checkpoint.checkpoint(
-                    block, hidden, attn_mask, use_reentrant=False
-                )
+                hidden = checkpoint(block, hidden, attn_mask, use_reentrant=False)
             else:
                 hidden = block(hidden, attn_mask)
         hidden = self.norm(hidden)
