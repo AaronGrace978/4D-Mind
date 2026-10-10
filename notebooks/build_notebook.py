@@ -45,13 +45,13 @@ if "A100" not in name:
     print("This preset is tuned for an A100. A smaller GPU may need batch 1 and can run out of memory.")
 """))
 
-cells.append(cell("code", f"""
+cells.append(cell("code", """
 import os
 import subprocess
 import sys
 
 REPO = "https://github.com/AaronGrace978/4D-Mind.git"
-BRANCH = "{BRANCH}"
+BRANCH = "__BRANCH__"
 TARGET = "/content/4D-Mind"
 
 if os.path.exists(os.path.join(TARGET, ".git")):
@@ -64,7 +64,15 @@ os.chdir(TARGET)
 if TARGET not in sys.path:
     sys.path.insert(0, TARGET)
 print(subprocess.check_output(["git", "log", "-1", "--oneline"], text=True).strip())
-"""))
+
+# Without a restart, Python keeps running the tesseract code it imported earlier,
+# even though the files above were just updated.
+stale = [module for module in sys.modules if module == "tesseract" or module.startswith("tesseract.")]
+for module in stale:
+    del sys.modules[module]
+if stale:
+    print(f"dropped {len(stale)} tesseract modules imported before this update")
+""".replace("__BRANCH__", BRANCH)))
 
 cells.append(cell("markdown", """
 Colab ships an old `torchao`. Current `peft` refuses to build LoRA layers while it is installed, and nothing here uses it, so it is removed.
@@ -85,6 +93,16 @@ try:
     raise SystemExit("torchao is still installed. Run: !pip uninstall -y torchao, then Runtime > Restart session.")
 except metadata.PackageNotFoundError:
     pass
+
+# A library imported before pip replaced it keeps running the old version.
+changed = []
+for package in ("transformers", "peft", "accelerate", "gradio"):
+    loaded = sys.modules.get(package)
+    if loaded is not None and getattr(loaded, "__version__", None) != metadata.version(package):
+        changed.append(f"{package} {loaded.__version__} -> {metadata.version(package)}")
+if changed:
+    raise SystemExit("pip upgraded libraries this session had already imported (" + ", ".join(changed)
+                     + "). Runtime > Restart session, then Run all; finished stages are skipped.")
 """))
 
 cells.append(cell("markdown", """
