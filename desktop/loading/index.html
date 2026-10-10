@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>4D Mind</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: radial-gradient(1200px 500px at 10% -10%, #152033, transparent 55%), #07080b;
+      color: #d7deea;
+      font: 15px/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+    main {
+      height: 100%;
+      display: grid;
+      place-content: center;
+      gap: 10px;
+      text-align: center;
+      padding: 0 32px;
+    }
+    .mark { margin: 0; letter-spacing: 0.28em; color: #8ef6d2; font-size: 12px; }
+    h1 { margin: 0; font-size: 26px; font-weight: 560; }
+    #status { margin: 0; color: #8b97a8; }
+    #status.error { color: #ff5d8f; white-space: pre-wrap; text-align: left; max-width: 760px; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="mark">4D-MIND</p>
+    <h1>Holding the solid</h1>
+    <p id="status">Starting the Python viewer…</p>
+  </main>
+  <script>
+    window.showError = (message) => {
+      const status = document.getElementById("status");
+      status.className = "error";
+      status.textContent = message;
+    };
+  </script>
+</body>
+</html>

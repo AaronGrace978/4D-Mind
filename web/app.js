@@ -240,12 +240,45 @@ async function boot() {
   const response = await fetch("/api/block");
   const payload = await response.json();
   state.points = payload.points;
+  state.marker = null;
   reading.textContent = payload.reading;
-  angleOut.textContent = "0°";
-  cutOut.textContent = "1.00";
+  probeOut.textContent = "Click the solid.";
+  document.getElementById("title").textContent = payload.name;
+  document.getElementById("subtitle").textContent = payload.subtitle;
+  document.title = `4D Block Mind — ${payload.name}`;
+  for (const [channel, label] of Object.entries(payload.labels || {})) {
+    const node = document.getElementById(`label-${channel}`);
+    if (node) node.textContent = label;
+  }
   resize();
   await loadSlice();
 }
+
+document.getElementById("open-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.target.querySelector("button");
+  const status = document.getElementById("open-status");
+  const path = document.getElementById("open-path").value.trim();
+  button.disabled = true;
+  status.className = "";
+  status.textContent = path ? `Rasterizing ${path}…` : "Returning to Iris…";
+  try {
+    const response = await fetch("/api/open", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || response.statusText);
+    status.textContent = "";
+    await boot();
+  } catch (error) {
+    status.className = "error";
+    status.textContent = String(error.message || error);
+  } finally {
+    button.disabled = false;
+  }
+});
 
 window.addEventListener("resize", resize);
 boot();

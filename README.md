@@ -45,6 +45,53 @@ Then open `http://127.0.0.1:8765`. Drag to orbit, move **Rotate time into x**, d
 python3 -m tesseract.demo --npz iris_block.npz
 ```
 
+The **Hold** box at the top of the panel swaps the solid without restarting: paste a path to a git repository or a `.npz`, or leave it blank for Iris.
+
+## A repository as a solid
+
+A git history rasterizes into the same block a life does, with the same five channels, so the viewer and the 4D net take it unchanged.
+
+| Axis | In a repository |
+| --- | --- |
+| t | commit, oldest to newest along `main`'s first-parent history |
+| x | file, sorted by path, so a directory is a neighborhood |
+| y | line position, top of the file at the top of the block |
+| z | nesting depth (leading indentation) |
+
+| Channel | Iris | Repository |
+| --- | --- | --- |
+| occupancy | body | a non-blank line of code |
+| tissue | the heart | definitions: `def`, `class`, `fn`, `function`, `struct`, ... |
+| affect | mood | churn: the share of lines here that changed since the previous slice |
+| scar | opens and stays | lines written by a commit whose message says fix, bug, or revert, kept while they survive |
+| other | Jun | lines written by anyone but the repository's main author |
+
+A line keeps its author and its fix flag for as long as it survives later edits. A merge's lines take theirs from `git blame`, so a merged PR is credited to whoever wrote it, not whoever pressed merge.
+
+```bash
+python3 -m tesseract.demo --repo .                        # view this repo's own history
+python3 -m tesseract.codeblock path/to/repo --out repo_block.npz
+python3 -m tesseract.codeblock path/to/repo --shape 32 64 64 64 --out repo_a100.npz   # the a100 block size
+```
+
+Clicking a point names the commit, the file, the approximate line, and what is there. The `.npz` has the same layout as `iris_block.npz`, so `tesseract.life.load_npz` and the eval functions read it. The net in the notebook has only seen lives, so a repository is outside what it was trained on. Pretraining on many repositories is a separate run.
+
+## Desktop app (Tauri)
+
+`desktop/` wraps the viewer in a native window. The app starts `python3 -m tesseract.demo` on a free local port, shows the viewer once it answers, and stops it when the window closes.
+
+Needs Rust, Node 18+, Python with `numpy`, and on Linux the WebKitGTK headers (`libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev`; see [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/)).
+
+```bash
+cd desktop
+npm install
+npm run dev                                   # Iris
+FOURD_MIND_REPO=/path/to/repo npm run dev     # a repository's history
+npm run build                                 # installers in src-tauri/target/release/bundle/
+```
+
+`FOURD_MIND_NPZ` opens an exported block, `FOURD_MIND_PYTHON` picks the interpreter, and `FOURD_MIND_ROOT` points a built app at this checkout if it was moved. A built binary also forwards its arguments, so `4d-mind --repo .` works.
+
 ## Tests
 
 ```bash
@@ -52,7 +99,7 @@ pip install -r requirements.txt
 python3 -m pytest
 ```
 
-The CPU tests use the `tiny` preset. They check Iris’s geometry (the two ends of the tube share a room, the scar persists, tissue sits inside the body), that a causal mask cannot see the future, and that a resident who can see the rest of the block reconstructs a hidden early slice that the witness cannot.
+The CPU tests use the `tiny` preset. They check Iris’s geometry (the two ends of the tube share a room, the scar persists, tissue sits inside the body), that a causal mask cannot see the future, and that a resident who can see the rest of the block reconstructs a hidden early slice that the witness cannot. The repository tests build a small git history and check that a deleted file leaves the solid, fix lines persist after the fix, and another author's lines show up where that author wrote them.
 
 ## Layout
 
@@ -64,7 +111,9 @@ The CPU tests use the `tiny` preset. They check Iris’s geometry (the two ends 
 | `tesseract/finetune.py` | Adapt the block net onto Iris |
 | `tesseract/lora_voice.py` | LoRA stage |
 | `tesseract/eval.py` | Early vs late slice error, interior error, rotation cosine |
+| `tesseract/codeblock.py` | A git history rasterized as a block |
 | `tesseract/demo.py`, `web/` | Local viewer |
+| `desktop/` | Tauri desktop app around the viewer |
 | `tesseract/gradio_app.py` | Colab instrument |
 | `notebooks/4d_mind_a100.ipynb` | The A100 entry point, written by `notebooks/build_notebook.py` |
 

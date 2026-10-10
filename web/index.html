@@ -3,27 +3,35 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>4D Block Mind — Iris</title>
+  <title>4D Block Mind</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header>
     <p class="mark">4D-MIND</p>
-    <h1>Block resident</h1>
-    <p class="sub">Iris, held as one solid. Time is an axis you can turn.</p>
+    <h1 id="title">Block resident</h1>
+    <p class="sub" id="subtitle">Iris, held as one solid. Time is an axis you can turn.</p>
   </header>
   <main class="layout">
     <div class="stage-wrap">
       <canvas id="stage"></canvas>
       <p class="hint">
-        <span><i class="mint"></i>body</span>
-        <span><i class="rose"></i>tissue</span>
-        <span><i class="amber"></i>scar</span>
-        <span><i class="blue"></i>other</span>
+        <span><i class="mint"></i><b id="label-occupancy">body</b></span>
+        <span><i class="rose"></i><b id="label-tissue">tissue</b></span>
+        <span><i class="amber"></i><b id="label-scar">scar</b></span>
+        <span><i class="blue"></i><b id="label-other">other</b></span>
         <span>drag to orbit · click to probe</span>
       </p>
     </div>
     <aside>
+      <section>
+        <h2>Hold</h2>
+        <form id="open-form" class="open">
+          <input id="open-path" type="text" spellcheck="false" placeholder="path to a git repo or .npz, blank for Iris">
+          <button type="submit">Hold</button>
+        </form>
+        <p id="open-status"></p>
+      </section>
       <section>
         <h2>Reading</h2>
         <p id="reading">Loading the solid…</p>

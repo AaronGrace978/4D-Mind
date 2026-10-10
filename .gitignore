@@ -7,3 +7,6 @@ checkpoints/
 *.pt
 *.npz
 .ipynb_checkpoints/
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
