@@ -1,23 +1,41 @@
-"""Local worldtube viewer. Speech stays on the Colab GPU; this page shows the solid."""
+"""Local 4D Mind platform. The Tauri 2 shell opens this viewer in a native window."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from tesseract.codeblock import repo_probe_sentence, rasterize_repo
-from tesseract.life import load_iris, load_npz, rasterize
-from tesseract.viewdata import probe_channels, sample_points, slice_image
+from tesseract.character import Resident, voice_from_env
+from tesseract.codeblock import SCULPTURES, hold_sculpture, repo_probe_sentence, rasterize_repo
+from tesseract.life import SMEAR_KINDS, load_iris, load_npz, media_probe_sentence, rasterize, rasterize_smear
+from tesseract.platform import catalog
+from tesseract.viewdata import probe_channels, sample_field_at_points, sample_points, slice_image
 from tesseract.voice_text import describe, probe_sentence
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 VIEW_SHAPE = (16, 32, 32, 32)
 LIFE_LABELS = {"occupancy": "body", "tissue": "tissue", "affect": "affect", "scar": "scar", "other": "other"}
+
+
+def _risk_model():
+    path = os.environ.get("FOURD_MIND_RISK_CKPT")
+    if not path:
+        return None
+    try:
+        from tesseract.train import load_checkpoint, pick_device
+
+        model, _cfg, _blob = load_checkpoint(path, pick_device("auto"))
+        model.eval()
+        return model
+    except Exception as exc:  # noqa: BLE001
+        print(f"risk checkpoint unavailable ({exc})", flush=True)
+        return None
 
 
 class BlockWorld:
@@ -26,13 +44,30 @@ class BlockWorld:
         npz: str | None = None,
         shape: tuple[int, int, int, int] = VIEW_SHAPE,
         repo: str | None = None,
+        sculpture: str | None = None,
     ) -> None:
         self.shape = shape
         self.lock = threading.Lock()
-        self.load(npz=npz, repo=repo)
+        self.model = _risk_model()
+        self.resident = Resident(voice_from_env())
+        self.chat: list[dict] = []
+        self.risk_cache: dict | None = None
+        self.load(npz=npz, repo=repo, sculpture=sculpture)
 
-    def load(self, npz: str | None = None, repo: str | None = None) -> None:
-        if repo:
+    def load(
+        self,
+        npz: str | None = None,
+        repo: str | None = None,
+        sculpture: str | None = None,
+        smear: str | None = None,
+        smear_amount: float = 0.16,
+        wav: str | None = None,
+    ) -> None:
+        if smear:
+            volume, invariants, meta = rasterize_smear(self.shape, smear, smear=smear_amount, wav=wav)
+        elif sculpture:
+            volume, invariants, meta = hold_sculpture(sculpture, self.shape, repo=repo)
+        elif repo:
             volume, invariants, meta = rasterize_repo(repo, self.shape)
         elif npz:
             volume, invariants, meta = load_npz(npz)
@@ -44,19 +79,30 @@ class BlockWorld:
             self.volume, self.invariants, self.meta = volume, invariants, meta
             self.points = points
             self.reading = reading
+            self.chat = []
+            self.risk_cache = None
+
+    @property
+    def kind(self) -> str:
+        return str(self.meta.get("kind", "life"))
 
     @property
     def is_repo(self) -> bool:
-        return self.meta.get("kind") == "repo"
+        return self.kind == "repo"
 
     def block_payload(self) -> dict:
-        if self.is_repo:
+        kind = self.kind
+        if kind == "repo":
             subtitle = "A repository's whole history, held as one solid. Commits are an axis you can turn."
+        elif kind == "sculpture":
+            subtitle = f"{self.meta['name']} as an ambient sculpture. Time is an axis you can turn."
+        elif kind == "media":
+            subtitle = f"{self.meta['name']}, smeared into one solid. Time is thick."
         else:
             subtitle = f"{self.meta['name']}, held as one solid. Time is an axis you can turn."
         return {
             "name": self.meta["name"],
-            "kind": self.meta.get("kind", "life"),
+            "kind": kind,
             "subtitle": subtitle,
             "reading": self.reading,
             "labels": self.meta.get("labels", LIFE_LABELS),
@@ -64,12 +110,21 @@ class BlockWorld:
             "invariant_names": self.meta["invariant_names"],
             "points": self.points.tolist(),
             "shape": list(self.volume.shape),
+            "theme": self.meta.get("theme"),
+            "voice": self.resident.backend,
+            "studio": kind if kind in {"sculpture", "media"} else ("scan" if kind == "repo" else "resident"),
         }
 
     def probe_payload(self, x: float, y: float, z: float, t: float) -> dict:
         channels = probe_channels(self.volume, x, y, z, t)
         if self.is_repo:
             sentence = repo_probe_sentence(self.meta, channels, x, y, z, t)
+        elif self.kind == "sculpture":
+            from tesseract.codeblock import sculpture_probe_sentence
+
+            sentence = sculpture_probe_sentence(self.meta, channels, x, y, z, t)
+        elif self.kind == "media":
+            sentence = media_probe_sentence(channels, x, y, z, t)
         else:
             sentence = probe_sentence(channels, x, y, z, t)
         return {"x": x, "y": y, "z": z, "t": t, "channels": channels, "sentence": sentence}
@@ -78,6 +133,37 @@ class BlockWorld:
         image = slice_image(self.volume, axis, value)
         height, width, _rgb = image.shape
         return {"width": width, "height": height, "rgb": image.reshape(-1).tolist(), "axis": axis, "value": value}
+
+    def risk_payload(self) -> dict:
+        if self.risk_cache is not None:
+            return self.risk_cache
+        from tesseract.risk import report, report_text
+
+        raw = report(self.volume, self.meta, self.model)
+        field = raw.pop("risk")
+        payload = {
+            "source": raw["source"],
+            "backtest": raw["backtest"],
+            "weights": raw["weights"],
+            "files": raw.get("files", []),
+            "hotspots": raw.get("hotspots", []),
+            "points": sample_field_at_points(field, self.points),
+            "reading": report_text(raw, self.meta.get("name", "this block")),
+        }
+        self.risk_cache = payload
+        return payload
+
+    def talk(self, query: str, t: float) -> dict:
+        reply = self.resident.reply(self.meta, t, query, self.chat, self.volume)
+        self.chat.append({"role": "user", "content": query})
+        self.chat.append({"role": "assistant", "content": reply["text"]})
+        self.chat = self.chat[-16:]
+        return reply
+
+
+def _read_json(handler: SimpleHTTPRequestHandler) -> dict:
+    length = int(handler.headers.get("Content-Length", "0"))
+    return json.loads(handler.rfile.read(length) or b"{}")
 
 
 def make_handler(world: BlockWorld):
@@ -90,8 +176,17 @@ def make_handler(world: BlockWorld):
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+            if parsed.path == "/api/platform":
+                self._json(catalog())
+                return
+            if parsed.path == "/api/sculptures":
+                self._json({"sculptures": catalog()["sculptures"]})
+                return
             if parsed.path == "/api/block":
                 self._json(world.block_payload())
+                return
+            if parsed.path == "/api/risk":
+                self._json(world.risk_payload())
                 return
             if parsed.path == "/api/probe":
                 query = parse_qs(parsed.query)
@@ -123,20 +218,53 @@ def make_handler(world: BlockWorld):
             super().do_GET()
 
         def do_POST(self) -> None:  # noqa: N802
-            if urlparse(self.path).path != "/api/open":
-                self._json({"error": "not found"}, status=404)
-                return
-            # A JSON body forces a CORS preflight, which this server never answers,
-            # so another site open in the browser cannot swap the solid.
+            path = urlparse(self.path).path
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 self._json({"error": "send application/json"}, status=415)
                 return
+            if path == "/api/open":
+                self._open()
+                return
+            if path == "/api/resident":
+                try:
+                    request = _read_json(self)
+                    payload = world.talk(str(request.get("query", "")), float(request.get("t", 0.5)))
+                except (TypeError, ValueError) as exc:
+                    self._json({"error": str(exc)}, status=400)
+                    return
+                self._json(payload)
+                return
+            if path == "/api/smear":
+                try:
+                    request = _read_json(self)
+                    kind = str(request.get("kind", "pulse")).strip() or "pulse"
+                    if kind not in SMEAR_KINDS:
+                        raise ValueError(f"unknown smear {kind!r}")
+                    smear = float(request.get("smear", 0.16))
+                    wav = str(request.get("wav") or "").strip() or None
+                    world.load(smear=kind, smear_amount=smear, wav=wav)
+                except (OSError, ValueError, KeyError) as exc:
+                    self._json({"error": str(exc)}, status=400)
+                    return
+                self._json({"name": world.meta["name"], "kind": world.kind})
+                return
+            self._json({"error": "not found"}, status=404)
+
+        def _open(self) -> None:
+            source = ""
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                request = json.loads(self.rfile.read(length) or b"{}")
+                request = _read_json(self)
                 source = str(request.get("path", "")).strip()
-                if not source:
+                sculpture = str(request.get("sculpture") or "").strip() or None
+                smear = str(request.get("smear") or "").strip() or None
+                if smear:
+                    world.load(smear=smear, smear_amount=float(request.get("smear_amount", 0.16)))
+                elif sculpture:
+                    world.load(sculpture=sculpture, repo=source or None)
+                elif not source:
                     world.load()
+                elif source.lower() in SCULPTURES:
+                    world.load(sculpture=source.lower())
                 elif source.endswith(".npz"):
                     world.load(npz=source)
                 else:
@@ -145,7 +273,7 @@ def make_handler(world: BlockWorld):
                 detail = getattr(exc, "stderr", None) or str(exc)
                 self._json({"error": f"could not hold {source or 'Iris'}: {str(detail).strip()}"}, status=400)
                 return
-            self._json({"name": world.meta["name"], "kind": world.meta.get("kind", "life")})
+            self._json({"name": world.meta["name"], "kind": world.kind})
 
         def _json(self, payload: dict, status: int = 200) -> None:
             body = json.dumps(payload).encode("utf-8")
@@ -165,25 +293,29 @@ def make_server(
     npz: str | None = None,
     shape=VIEW_SHAPE,
     repo: str | None = None,
+    sculpture: str | None = None,
 ):
-    world = BlockWorld(npz=npz, shape=shape, repo=repo)
+    world = BlockWorld(npz=npz, shape=shape, repo=repo, sculpture=sculpture)
     server = ThreadingHTTPServer((host, port), make_handler(world))
     return server, world
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Serve the 4D worldtube viewer")
+    parser = argparse.ArgumentParser(description="Serve the 4D Mind platform")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--npz", default=None, help="Exported block from the Colab notebook or tesseract.codeblock")
     parser.add_argument("--repo", default=None, help="Hold a git repository's history instead of Iris")
+    parser.add_argument("--sculpture", default=None, choices=sorted(SCULPTURES), help="Ambient sculpture of a famous tree")
     parser.add_argument("--shape", type=int, nargs=4, default=list(VIEW_SHAPE), metavar=("T", "D", "H", "W"))
     args = parser.parse_args()
     shape = tuple(args.shape)
-    _server, world = make_server(args.host, args.port, npz=args.npz, shape=shape, repo=args.repo)
+    _server, world = make_server(
+        args.host, args.port, npz=args.npz, shape=shape, repo=args.repo, sculpture=args.sculpture
+    )
     print(
-        f"{world.meta['name']} block {tuple(world.volume.shape)}  points {len(world.points)}  "
-        f"http://{args.host}:{args.port}",
+        f"4D Mind {catalog()['version']}  {world.meta['name']} block {tuple(world.volume.shape)}  "
+        f"points {len(world.points)}  http://{args.host}:{args.port}",
         flush=True,
     )
     try:

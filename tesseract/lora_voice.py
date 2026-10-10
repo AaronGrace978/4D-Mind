@@ -13,9 +13,28 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from tesseract.character import grounded_answer
 from tesseract.life import load_iris, rasterize
 from tesseract.train import load_checkpoint, make_cache, pick_device, volumes_to_torch
-from tesseract.voice_text import QUERY_TEXT, SYSTEM, answer_for
+from tesseract.voice_text import CHARACTER_QUESTIONS, CHARACTER_SYSTEM, QUERY_TEXT, SYSTEM, answer_for, character_query
+
+CHARACTER_SYSTEM_PROMPT = CHARACTER_SYSTEM
+
+
+def character_examples(metas: list[dict], per_life: int, rng: np.random.Generator) -> list[tuple[int, str, str, str]]:
+    """`(life, system, query, answer)` rows where the listener stands at a random instant.
+
+    The answer depends on where the listener stands, so the voice has to place
+    every event of the solid relative to that instant at once.
+    """
+    rows = []
+    for index, meta in enumerate(metas):
+        for _ in range(per_life):
+            t = float(np.round(rng.uniform(0.0, 1.0), 2))
+            question = CHARACTER_QUESTIONS[int(rng.integers(0, len(CHARACTER_QUESTIONS)))]
+            system = CHARACTER_SYSTEM.format(name=meta.get("name", "the resident"), t=t)
+            rows.append((index, system, character_query(t, question), grounded_answer(meta, t, question)))
+    return rows
 
 
 def _lm_device(language) -> torch.device:
@@ -52,10 +71,10 @@ def _token_ids(tokenizer, text: str) -> list[int]:
     return list(tokenizer(text, add_special_tokens=False)["input_ids"])
 
 
-def _chat_ids(tokenizer, query: str, answer: str | None) -> tuple[list[int], int]:
+def _chat_ids(tokenizer, query: str, answer: str | None, system: str = SYSTEM) -> tuple[list[int], int]:
     # Render to text first: transformers 5 returns a dict from apply_chat_template(tokenize=True).
     messages = [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": system},
         {"role": "user", "content": query},
     ]
     prompt = _token_ids(tokenizer, tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False))
@@ -150,6 +169,7 @@ def train_voice(
     lr_lora: float = 1e-4,
     seed: int = 7,
     log_every: int = 20,
+    character_per_life: int = 6,
 ) -> Path:
     device = torch.device(device)
     out = Path(out_dir)
@@ -168,15 +188,17 @@ def train_voice(
     bridge = encoder.soft.to(device)
     match_embedding_scale(bridge, language)
     bridge.train()
-    examples = [(index, key) for index in range(len(metas)) for key in QUERY_TEXT]
-    examples.extend((0, key) for _ in range(3) for key in QUERY_TEXT)
+    plain = [(index, key) for index in range(len(metas)) for key in QUERY_TEXT]
+    plain.extend((0, key) for _ in range(3) for key in QUERY_TEXT)
+    examples = [(index, SYSTEM, QUERY_TEXT[key], answer_for(metas[index], key)) for index, key in plain]
+    rng = np.random.default_rng(seed)
+    examples.extend(character_examples(metas, character_per_life, rng))
     opt = torch.optim.AdamW(
         [
             {"params": bridge.parameters(), "lr": lr_bridge},
             {"params": [p for p in language.parameters() if p.requires_grad], "lr": lr_lora},
         ]
     )
-    rng = np.random.default_rng(seed)
     language.train()
     pad_id = int(tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id)
     for step in range(1, steps + 1):
@@ -185,8 +207,8 @@ def train_voice(
         prompt_lens = []
         latent_rows = []
         for choice in pick:
-            index, key = examples[int(choice)]
-            ids, plen = _chat_ids(tokenizer, QUERY_TEXT[key], answer_for(metas[index], key))
+            index, system, query, answer = examples[int(choice)]
+            ids, plen = _chat_ids(tokenizer, query, answer, system)
             ids_batch.append(ids)
             prompt_lens.append(plen)
             latent_rows.append(latents[index])
@@ -223,7 +245,16 @@ def train_voice(
         out / "bridge.pt",
     )
     (out / "voice.json").write_text(
-        json.dumps({"base": model_name, "steps": steps, "queries": QUERY_TEXT}, indent=2),
+        json.dumps(
+            {
+                "base": model_name,
+                "steps": steps,
+                "queries": QUERY_TEXT,
+                "character_questions": list(CHARACTER_QUESTIONS),
+                "character_per_life": character_per_life,
+            },
+            indent=2,
+        ),
         encoding="utf-8",
     )
     print(f"wrote {out}", flush=True)
@@ -231,10 +262,18 @@ def train_voice(
 
 
 @torch.no_grad()
-def generate_from_latent(language, tokenizer, bridge, latent: torch.Tensor, query: str, max_new_tokens: int = 160) -> str:
+def generate_from_latent(
+    language,
+    tokenizer,
+    bridge,
+    latent: torch.Tensor,
+    query: str,
+    max_new_tokens: int = 160,
+    system: str = SYSTEM,
+) -> str:
     language.eval()
     bridge.eval()
-    ids, _plen = _chat_ids(tokenizer, query, None)
+    ids, _plen = _chat_ids(tokenizer, query, None, system)
     lm_device = _lm_device(language)
     prompt = torch.tensor(ids, dtype=torch.long, device=lm_device).view(1, -1)
     embeds = language.get_input_embeddings()(prompt)
@@ -267,6 +306,7 @@ def main() -> None:
     parser.add_argument("--cache", type=int, default=8)
     parser.add_argument("--batch", type=int, default=1)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--character-per-life", type=int, default=6, help="Character turns per life, from random instants")
     args = parser.parse_args()
     train_voice(
         args.encoder,
@@ -276,6 +316,7 @@ def main() -> None:
         device=pick_device(args.device),
         cache=args.cache,
         lm_batch=args.batch,
+        character_per_life=args.character_per_life,
     )
 
 

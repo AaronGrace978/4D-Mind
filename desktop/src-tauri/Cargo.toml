@@ -1,7 +1,7 @@
 [package]
 name = "four-d-mind"
-version = "0.1.0"
-description = "Desktop shell for the 4D-Mind block viewer"
+version = "1.0.0"
+description = "4D Mind — Tauri 2 platform for sculptures, risk, the resident, and 4D smear"
 edition = "2021"
 rust-version = "1.77.2"
 

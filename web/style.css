@@ -23,8 +23,14 @@ html, body {
 }
 
 header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 18px;
   padding: 22px 28px 8px;
 }
+
+.brand { min-width: 0; }
 
 .mark {
   margin: 0;
@@ -39,14 +45,41 @@ h1 {
   font-weight: 560;
 }
 
-.sub, .hint {
+.sub, .hint, .blurb {
   color: var(--dim);
   margin: 6px 0 0;
 }
 
+.blurb { margin: 0 0 10px; font-size: 12px; }
+
+#studios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#studios button {
+  background: #0b0e14;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+#studios button.on {
+  background: var(--mint);
+  color: #07080b;
+  border-color: var(--mint);
+}
+
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr) 360px;
   gap: 18px;
   padding: 12px 22px 28px;
 }
@@ -121,6 +154,8 @@ section {
   padding: 14px 14px 16px;
 }
 
+.hidden { display: none; }
+
 h2 {
   margin: 0 0 8px;
   font-size: 12px;
@@ -130,10 +165,25 @@ h2 {
   font-weight: 560;
 }
 
-#reading, #probe-readout {
+#reading, #probe-readout, #scan-reading {
   margin: 0;
   white-space: pre-wrap;
 }
+
+#scan-reading {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+}
+
+#hotspots {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+#hotspots li { margin: 4px 0; }
 
 label {
   display: grid;
@@ -166,12 +216,12 @@ select {
   align-items: center;
 }
 
-.open {
+.open, .ask {
   display: flex;
   gap: 8px;
 }
 
-.open input {
+.open input, .ask input {
   flex: 1;
   min-width: 0;
   background: #0b0e14;
@@ -183,7 +233,7 @@ select {
   font-size: 12px;
 }
 
-.open button {
+.open button, .ask button, .cards button {
   background: var(--mint);
   color: #07080b;
   border: 0;
@@ -194,7 +244,33 @@ select {
   cursor: pointer;
 }
 
-.open button:disabled {
+.cards {
+  display: grid;
+  gap: 8px;
+}
+
+.cards button {
+  text-align: left;
+  padding: 10px 12px;
+  background: #0b0e14;
+  color: var(--text);
+  border: 1px solid var(--line);
+  font-weight: 500;
+}
+
+.cards button small {
+  display: block;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.cards button:hover, .cards button.on {
+  border-color: var(--mint);
+}
+
+.open button:disabled, .ask button:disabled, .cards button:disabled {
   opacity: 0.5;
   cursor: wait;
 }
@@ -223,7 +299,46 @@ select {
   border-radius: 8px;
 }
 
+.chat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+  margin-bottom: 10px;
+}
+
+.chat p {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.chat .you { background: #0b0e14; color: var(--dim); }
+.chat .them { background: #182230; color: var(--text); }
+
+.prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.prompts button {
+  background: transparent;
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
 @media (max-width: 900px) {
+  header { flex-direction: column; align-items: start; }
   .layout { grid-template-columns: 1fr; }
   #stage { height: 62vh; }
 }

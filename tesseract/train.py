@@ -266,7 +266,11 @@ def load_checkpoint(path: str | Path, device: torch.device | str = "cpu") -> tup
     blob = torch.load(path, map_location=device, weights_only=False)
     cfg = config_from_dict(blob["cfg"])
     model = Eternalist(cfg)
-    model.load_state_dict(blob["model"])
+    missing, unexpected = model.load_state_dict(blob["model"], strict=False)
+    # Checkpoints from before the risk head load with a fresh one.
+    missing = [key for key in missing if not key.startswith("risk_head.")]
+    if missing or unexpected:
+        raise RuntimeError(f"checkpoint {path} does not match the model: missing {missing}, unexpected {unexpected}")
     model.to(device)
     return model, cfg, blob
 
@@ -279,7 +283,7 @@ def pick_device(name: str) -> torch.device:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pretrain a 4D block model")
-    parser.add_argument("--config", default="tiny", choices=("tiny", "a100"))
+    parser.add_argument("--config", default="tiny", choices=("tiny", "repo", "a100"))
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--cache", type=int, default=8)

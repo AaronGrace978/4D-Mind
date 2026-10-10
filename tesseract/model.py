@@ -4,6 +4,10 @@ A life is patched into tokens that all attend to each other. Time is one of
 four coordinates on the token, not an order the network is forced to respect.
 A causal mask is optional: that pass is the 3D witness, who cannot use a later
 slice to fill in an earlier one.
+
+The risk head reads each token through that causal pass and gives a logit for
+whether a fix will land in its spatial patch at a later time. A token can only
+see its own time bin and earlier ones, so it predicts rather than reads.
 """
 
 from __future__ import annotations
@@ -80,6 +84,7 @@ class BlockOutput:
         invariants: torch.Tensor,
         soft_prompts: torch.Tensor,
         interior: torch.Tensor | None,
+        risk: torch.Tensor | None = None,
     ) -> None:
         self.latent = latent
         self.tokens = tokens
@@ -88,6 +93,7 @@ class BlockOutput:
         self.invariants = invariants
         self.soft_prompts = soft_prompts
         self.interior = interior
+        self.risk = risk
 
 
 class Eternalist(nn.Module):
@@ -124,6 +130,11 @@ class Eternalist(nn.Module):
             nn.Linear(cfg.dim, cfg.in_ch),
         )
         self.soft = nn.Linear(cfg.dim, cfg.n_soft_prompts * cfg.lm_hidden)
+        self.risk_head = nn.Sequential(
+            nn.Linear(cfg.dim, cfg.dim),
+            nn.GELU(),
+            nn.Linear(cfg.dim, 1),
+        )
 
         patch_index, coords = _token_tables(self.n_t, self.n_z, self.n_y, self.n_x, self.patch, cfg.shape)
         self.register_buffer("patch_index", patch_index, persistent=True)
@@ -140,9 +151,14 @@ class Eternalist(nn.Module):
 
     def perception_parameters(self):
         for name, param in self.named_parameters():
-            if name.startswith("soft."):
+            if name.startswith("soft.") or name.startswith("risk"):
                 continue
             yield param
+
+    def risk_parameters(self):
+        for name, param in self.named_parameters():
+            if name.startswith("risk"):
+                yield param
 
     def soft_from_latent(self, latent: torch.Tensor) -> torch.Tensor:
         batch = latent.shape[0]
@@ -224,7 +240,12 @@ class Eternalist(nn.Module):
             invariants=self.invariant_head(latent),
             soft_prompts=self.soft_from_latent(latent),
             interior=interior,
+            risk=self.risk_head(hidden).squeeze(-1),
         )
+
+    def risk_logits(self, volume: torch.Tensor) -> torch.Tensor:
+        """`(B, tokens)` logits that a fix lands in each token's spatial patch after its time bin."""
+        return self.forward(volume, causal=True).risk
 
     def latent_only(
         self,

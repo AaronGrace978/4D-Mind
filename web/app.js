@@ -1,5 +1,6 @@
 const state = {
   points: [],
+  risk: [],
   yaw: 0.35,
   pitch: 0.22,
   xt: 0,
@@ -7,8 +8,14 @@ const state = {
   cut: 1,
   sliceValue: 0.45,
   slab: false,
+  heat: false,
   drag: null,
   marker: null,
+  studio: "sculpt",
+  stand: 0.5,
+  smear: 0.16,
+  ambient: true,
+  theme: null,
 };
 
 const stage = document.getElementById("stage");
@@ -36,11 +43,15 @@ function axisValue(point) {
 
 function visiblePoints() {
   const thickness = 0.07;
-  return state.points.filter((point) => {
+  const out = [];
+  for (let index = 0; index < state.points.length; index += 1) {
+    const point = state.points[index];
     const value = axisValue(point);
-    if (state.slab) return Math.abs(value - state.cut) <= thickness;
-    return value <= state.cut + 1e-6;
-  });
+    if (state.slab ? Math.abs(value - state.cut) <= thickness : value <= state.cut + 1e-6) {
+      out.push({ point, index });
+    }
+  }
+  return out;
 }
 
 function project(point) {
@@ -52,7 +63,6 @@ function project(point) {
   const t = point[3] - 0.5;
   const xr = x * c - t * s;
   const tr = x * s + t * c;
-  // Time is the long axis. The slider turns that axis toward x.
   const yaw = Math.cos(state.yaw);
   const sy = Math.sin(state.yaw);
   const cp = Math.cos(state.pitch);
@@ -68,7 +78,18 @@ function project(point) {
   return { sx: vx2 * persp, sy: -vy2 * persp, depth: vz2, persp };
 }
 
-function colorOf(point) {
+function heatOf(risk) {
+  const t = Math.max(0, Math.min(1, risk));
+  const r = Math.round(40 + t * 215);
+  const g = Math.round(80 + (1 - t) * 80);
+  const b = Math.round(255 - t * 200);
+  return `rgba(${r}, ${g}, ${b}, 0.92)`;
+}
+
+function colorOf(point, index) {
+  if (state.heat && state.risk.length === state.points.length) {
+    return heatOf(state.risk[index] || 0);
+  }
   const tissue = point[5];
   const affect = point[6];
   const scar = point[7];
@@ -85,10 +106,10 @@ function draw() {
   const width = stage.width;
   const height = stage.height;
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#0b0e14";
+  ctx.fillStyle = state.theme?.bg || "#0b0e14";
   ctx.fillRect(0, 0, width, height);
   const points = visiblePoints();
-  const projected = points.map((point) => ({ point, view: project(point) }));
+  const projected = points.map((item) => ({ ...item, view: project(item.point) }));
   projected.sort((a, b) => a.view.depth - b.view.depth);
   let minX = Infinity;
   let maxX = -Infinity;
@@ -111,7 +132,7 @@ function draw() {
   for (const item of projected) {
     const x = cx + (item.view.sx - midX) * scale;
     const y = cy + (item.view.sy - midY) * scale;
-    ctx.fillStyle = colorOf(item.point);
+    ctx.fillStyle = colorOf(item.point, item.index);
     ctx.beginPath();
     ctx.arc(x, y, radius * item.view.persp, 0, Math.PI * 2);
     ctx.fill();
@@ -209,6 +230,21 @@ document.getElementById("slab").addEventListener("change", (event) => {
   draw();
 });
 
+document.getElementById("heat").addEventListener("change", (event) => {
+  state.heat = event.target.checked;
+  draw();
+});
+
+document.getElementById("stand").addEventListener("input", (event) => {
+  state.stand = Number(event.target.value) / 1000;
+  document.getElementById("stand-readout").textContent = state.stand.toFixed(2);
+});
+
+document.getElementById("smear-amount").addEventListener("input", (event) => {
+  state.smear = Number(event.target.value) / 100;
+  document.getElementById("smear-readout").textContent = state.smear.toFixed(2);
+});
+
 let sliceTimer = 0;
 function scheduleSlice() {
   window.clearTimeout(sliceTimer);
@@ -236,49 +272,231 @@ async function loadSlice() {
   sliceCtx.putImageData(image, 0, 0);
 }
 
+function showStudio(id) {
+  state.studio = id;
+  state.ambient = id === "sculpt" || id === "smear";
+  for (const button of document.querySelectorAll("#studios button")) {
+    button.classList.toggle("on", button.dataset.studio === id);
+  }
+  for (const panel of document.querySelectorAll(".studio-panel")) {
+    panel.classList.toggle("hidden", panel.id !== `panel-${id}`);
+  }
+  if (id === "scan") loadRisk();
+}
+
+document.getElementById("studios").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-studio]");
+  if (button) showStudio(button.dataset.studio);
+});
+
+function applyTheme(theme) {
+  state.theme = theme || null;
+  document.documentElement.style.setProperty("--bg", theme?.bg || "#07080b");
+  document.documentElement.style.setProperty("--mint", theme?.body || "#8ef6d2");
+}
+
+function setStatus(node, message, error) {
+  node.className = error ? "error" : "";
+  node.textContent = message;
+}
+
+async function hold(body, statusText) {
+  const status = document.getElementById("open-status");
+  setStatus(status, statusText);
+  const response = await fetch("/api/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  setStatus(status, "");
+  await boot();
+}
+
+function fillCards(node, items, onPick) {
+  node.innerHTML = "";
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.innerHTML = `<b>${item.title}</b><small>${item.blurb}</small>`;
+    button.addEventListener("click", () => onPick(item, button));
+    node.appendChild(button);
+  }
+}
+
+async function loadRisk() {
+  const readingNode = document.getElementById("scan-reading");
+  const list = document.getElementById("hotspots");
+  readingNode.textContent = "Scanning the solid…";
+  list.innerHTML = "";
+  const response = await fetch("/api/risk");
+  const payload = await response.json();
+  state.risk = payload.points || [];
+  readingNode.textContent = payload.reading;
+  for (const item of payload.hotspots || []) {
+    const row = document.createElement("li");
+    const lines = item.lines ? `:${item.lines[0]}-${item.lines[1]}` : "";
+    row.textContent = `${item.score.toFixed(2)}  ${item.file}${lines}`;
+    list.appendChild(row);
+  }
+  if (state.heat) draw();
+}
+
+function addChat(role, text) {
+  const chat = document.getElementById("chat");
+  const line = document.createElement("p");
+  line.className = role === "user" ? "you" : "them";
+  line.textContent = text;
+  chat.appendChild(line);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function ask(question) {
+  const query = question.trim();
+  if (!query) return;
+  addChat("user", query);
+  const response = await fetch("/api/resident", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, t: state.stand }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  addChat("them", payload.text);
+}
+
 async function boot() {
   const response = await fetch("/api/block");
   const payload = await response.json();
   state.points = payload.points;
+  state.risk = [];
   state.marker = null;
   reading.textContent = payload.reading;
   probeOut.textContent = "Click the solid.";
   document.getElementById("title").textContent = payload.name;
   document.getElementById("subtitle").textContent = payload.subtitle;
-  document.title = `4D Block Mind — ${payload.name}`;
+  document.title = `4D Mind — ${payload.name}`;
+  applyTheme(payload.theme);
+  document.getElementById("chat").innerHTML = "";
   for (const [channel, label] of Object.entries(payload.labels || {})) {
     const node = document.getElementById(`label-${channel}`);
     if (node) node.textContent = label;
   }
   resize();
   await loadSlice();
+  if (state.studio === "scan") await loadRisk();
 }
 
 document.getElementById("open-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.target.querySelector("button");
-  const status = document.getElementById("open-status");
   const path = document.getElementById("open-path").value.trim();
   button.disabled = true;
-  status.className = "";
-  status.textContent = path ? `Rasterizing ${path}…` : "Returning to Iris…";
   try {
-    const response = await fetch("/api/open", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error || response.statusText);
-    status.textContent = "";
-    await boot();
+    await hold({ path }, path ? `Rasterizing ${path}…` : "Returning to Iris…");
   } catch (error) {
-    status.className = "error";
-    status.textContent = String(error.message || error);
+    setStatus(document.getElementById("open-status"), String(error.message || error), true);
   } finally {
     button.disabled = false;
   }
 });
 
+document.getElementById("ask-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("ask");
+  const query = input.value;
+  input.value = "";
+  try {
+    await ask(query);
+  } catch (error) {
+    addChat("them", String(error.message || error));
+  }
+});
+
+document.getElementById("wav-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const wav = document.getElementById("wav-path").value.trim();
+  const status = document.getElementById("open-status");
+  try {
+    const response = await fetch("/api/smear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "pulse", smear: state.smear, wav }),
+    });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || response.statusText);
+    setStatus(status, "");
+    await boot();
+  } catch (error) {
+    setStatus(status, String(error.message || error), true);
+  }
+});
+
+async function setupPlatform() {
+  const response = await fetch("/api/platform");
+  const platform = await response.json();
+  fillCards(
+    document.getElementById("sculpture-grid"),
+    platform.sculptures.map((item) => ({ id: item.id, title: item.name, blurb: item.blurb })),
+    async (item) => {
+      try {
+        await hold({ sculpture: item.id }, `Holding ${item.title}…`);
+      } catch (error) {
+        setStatus(document.getElementById("open-status"), String(error.message || error), true);
+      }
+    },
+  );
+  fillCards(
+    document.getElementById("smear-grid"),
+    platform.smear_kinds.map((kind) => ({
+      id: kind,
+      title: kind,
+      blurb: kind === "iris-echo" ? "Iris, bled along t" : `Synthetic ${kind} clip`,
+    })),
+    async (item) => {
+      const status = document.getElementById("open-status");
+      try {
+        const response = await fetch("/api/smear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ kind: item.id, smear: state.smear }),
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || response.statusText);
+        setStatus(status, "");
+        await boot();
+      } catch (error) {
+        setStatus(status, String(error.message || error), true);
+      }
+    },
+  );
+  const prompts = document.getElementById("prompts");
+  prompts.innerHTML = "";
+  for (const question of platform.questions || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = question;
+    button.addEventListener("click", () => ask(question));
+    prompts.appendChild(button);
+  }
+}
+
+function ambientTick() {
+  if (state.ambient && !state.drag) {
+    state.xt += 0.003;
+    const degrees = Math.round(((state.xt * 180) / Math.PI + 180) % 360 - 180);
+    const slider = document.getElementById("xt");
+    if (document.activeElement !== slider) {
+      slider.value = String(degrees);
+      angleOut.textContent = `${degrees}°`;
+    }
+    draw();
+  }
+  window.requestAnimationFrame(ambientTick);
+}
+
 window.addEventListener("resize", resize);
+setupPlatform();
 boot();
+ambientTick();

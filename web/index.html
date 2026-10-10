@@ -3,14 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>4D Block Mind</title>
+  <title>4D Mind</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
   <header>
-    <p class="mark">4D-MIND</p>
-    <h1 id="title">Block resident</h1>
-    <p class="sub" id="subtitle">Iris, held as one solid. Time is an axis you can turn.</p>
+    <div class="brand">
+      <p class="mark">4D-MIND</p>
+      <h1 id="title">Block resident</h1>
+      <p class="sub" id="subtitle">Iris, held as one solid. Time is an axis you can turn.</p>
+    </div>
+    <nav id="studios" aria-label="Studios">
+      <button type="button" data-studio="sculpt" class="on">Sculpt</button>
+      <button type="button" data-studio="scan">Scan</button>
+      <button type="button" data-studio="resident">Resident</button>
+      <button type="button" data-studio="smear">Smear</button>
+    </nav>
   </header>
   <main class="layout">
     <div class="stage-wrap">
@@ -24,6 +32,50 @@
       </p>
     </div>
     <aside>
+      <section id="panel-sculpt" class="studio-panel">
+        <h2>Sculptures</h2>
+        <p class="blurb">Famous trees as ambient solids. Hold a local clone, or a characteristic block that does not need the source.</p>
+        <div id="sculpture-grid" class="cards"></div>
+      </section>
+      <section id="panel-scan" class="studio-panel hidden">
+        <h2>Vulnerability scan</h2>
+        <p class="blurb">Geometry of churn, fix filaments, other authors, and nesting ranks where the next fix is likely to land.</p>
+        <label class="check">
+          <input id="heat" type="checkbox">
+          Color the solid by risk
+        </label>
+        <pre id="scan-reading">Open a repository or sculpture, then scan.</pre>
+        <ol id="hotspots"></ol>
+      </section>
+      <section id="panel-resident" class="studio-panel hidden">
+        <h2>Resident</h2>
+        <p class="blurb">An AI who occupies the whole block. You stand at one instant; they answer from there and from every other.</p>
+        <label>
+          You stand at
+          <output id="stand-readout">0.50</output>
+          <input id="stand" type="range" min="0" max="1000" value="500">
+        </label>
+        <div id="chat" class="chat"></div>
+        <form id="ask-form" class="ask">
+          <input id="ask" type="text" autocomplete="off" placeholder="Who are you, from where I stand?">
+          <button type="submit">Ask</button>
+        </form>
+        <div id="prompts" class="prompts"></div>
+      </section>
+      <section id="panel-smear" class="studio-panel hidden">
+        <h2>4D smear</h2>
+        <p class="blurb">Streak picture and sound along t until a clip is one solid you can cut.</p>
+        <div id="smear-grid" class="cards"></div>
+        <label>
+          Smear width
+          <output id="smear-readout">0.16</output>
+          <input id="smear-amount" type="range" min="0" max="40" value="16">
+        </label>
+        <form id="wav-form" class="open">
+          <input id="wav-path" type="text" spellcheck="false" placeholder="optional path to a .wav">
+          <button type="submit">Smear WAV</button>
+        </form>
+      </section>
       <section>
         <h2>Hold</h2>
         <form id="open-form" class="open">

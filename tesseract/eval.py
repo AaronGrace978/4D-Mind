@@ -1,4 +1,4 @@
-"""Slice, interior, invariant, and rotation scores for a block checkpoint."""
+"""Slice, interior, invariant, rotation, and fix-risk scores for a block checkpoint."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import torch.nn.functional as F
 
 from tesseract.geom import rotate_xt
 from tesseract.life import load_iris, random_spec, rasterize
+from tesseract.metrics import auroc, average_precision, precision_at_k, risk_scores  # noqa: F401
 from tesseract.model import Eternalist
 from tesseract.train import load_checkpoint, pick_device, sample_interior, volumes_to_torch
 
@@ -90,6 +91,39 @@ def evaluate(
         "rotation_cosine": float(np.mean(cosine)),
         "latent_std": std,
     }
+
+
+@torch.no_grad()
+def evaluate_risk(
+    model: Eternalist | None,
+    volumes: list[np.ndarray],
+    device: torch.device | str = "cpu",
+) -> dict[str, dict[str, float]]:
+    """Fix-risk ranking scores for the causal risk head and the geometric heuristic, pooled over blocks.
+
+    Labels are spatial patches where a fix lands after the token's time bin.
+    """
+    from tesseract.risk import heuristic_token_scores, risk_targets
+
+    patch = model.cfg.patch if model is not None else 4
+    pooled: dict[str, list[np.ndarray]] = {"model": [], "heuristic": [], "labels": [], "valid": []}
+    if model is not None:
+        model.eval()
+        model.to(torch.device(device))
+    for volume in volumes:
+        labels, valid = risk_targets(volume, patch)
+        pooled["labels"].append(labels)
+        pooled["valid"].append(valid)
+        pooled["heuristic"].append(heuristic_token_scores(volume, patch))
+        if model is not None:
+            logits = model.risk_logits(volumes_to_torch(volume[None], torch.device(device)))
+            pooled["model"].append(logits[0].float().cpu().numpy())
+    labels = np.concatenate(pooled["labels"])
+    valid = np.concatenate(pooled["valid"])
+    out = {"heuristic": risk_scores(np.concatenate(pooled["heuristic"]), labels, valid)}
+    if model is not None:
+        out["model"] = risk_scores(np.concatenate(pooled["model"]), labels, valid)
+    return out
 
 
 def main() -> None:

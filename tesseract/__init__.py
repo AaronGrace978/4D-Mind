@@ -1,3 +1,3 @@
-"""4D Block Mind: a life as one spacetime solid."""
+"""4D Mind: a life, a repository, or a clip as one spacetime solid."""
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

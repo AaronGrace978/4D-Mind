@@ -41,6 +41,25 @@ def sample_points(volume: np.ndarray, max_points: int = 7000, seed: int = 0) -> 
     return np.concatenate([coords, values], axis=1).astype(np.float32)
 
 
+def sample_field_at_points(field: np.ndarray, points: np.ndarray) -> list[float]:
+    """Nearest-neighbor samples of a `(t, z, y, x)` field at viewer points."""
+    time, depth, height, width = field.shape[:4]
+    out = []
+    for point in np.asarray(points):
+        xi = int(round(float(point[0]) * max(width - 1, 0)))
+        yi = int(round(float(point[1]) * max(height - 1, 0)))
+        zi = int(round(float(point[2]) * max(depth - 1, 0)))
+        ti = int(round(float(point[3]) * max(time - 1, 0)))
+        out.append(float(field[ti, zi, yi, xi]))
+    return out
+
+
+def resample_volume(volume: np.ndarray, shape: tuple[int, int, int, int]) -> np.ndarray:
+    """Nearest-neighbor resample of a block's first four axes onto another grid."""
+    index = [np.minimum((np.arange(size) * old / size).astype(int), old - 1) for size, old in zip(shape, volume.shape[:4])]
+    return volume[np.ix_(*index)].astype(np.float32)
+
+
 def probe_channels(volume: np.ndarray, x: float, y: float, z: float, t: float) -> dict[str, float]:
     values = _sample_trilinear(volume, x, y, z, t)
     return {name: float(values[index]) for index, name in enumerate(CHANNEL_NAMES)}

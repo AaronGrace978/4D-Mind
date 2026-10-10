@@ -30,6 +30,7 @@ def test_patchify_roundtrip_and_soft_prompt_shape():
     assert output.soft_prompts.shape == (2, cfg.n_soft_prompts, cfg.lm_hidden)
     assert output.interior.shape == (2, 4, cfg.in_ch)
     assert output.invariants.shape == (2, cfg.n_invariants)
+    assert output.risk.shape == (2, model.n_tokens)
 
 
 def test_zero_rotation_is_the_same_block():

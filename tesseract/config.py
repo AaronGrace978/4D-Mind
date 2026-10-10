@@ -1,7 +1,7 @@
 """Volume and model presets.
 
-`tiny` fits a CPU overfit. `a100` is the Colab Pro network: a 32×64×64×64
-block, patch 8, width 768, depth 12.
+`tiny` fits a CPU overfit. `repo` is the fix-risk predictor's CPU-sized net.
+`a100` is the Colab Pro network: a 32×64×64×64 block, patch 8, width 768, depth 12.
 """
 
 from __future__ import annotations
@@ -82,6 +82,30 @@ def a100() -> TrainConfig:
     )
 
 
+def repo() -> TrainConfig:
+    """The risk predictor's block: 16 time slices, 8 nesting layers, 32 line rows, 32 file columns.
+
+    Small enough to train on a CPU in minutes.
+    """
+    return TrainConfig(
+        name="repo",
+        t=16,
+        d=8,
+        h=32,
+        w=32,
+        patch=4,
+        dim=96,
+        depth=3,
+        heads=4,
+        mlp_ratio=2.0,
+        lr=1e-3,
+        finetune_lr=3e-4,
+        weight_decay=0.01,
+        mask_ratio=0.3,
+        seed=7,
+    )
+
+
 def config_from_dict(payload: dict) -> TrainConfig:
     known = {item.name for item in fields(TrainConfig)}
     return TrainConfig(**{key: value for key, value in payload.items() if key in known})
@@ -90,9 +114,11 @@ def config_from_dict(payload: dict) -> TrainConfig:
 def preset(name: str) -> TrainConfig:
     if name == "tiny":
         return tiny()
+    if name == "repo":
+        return repo()
     if name == "a100":
         return a100()
-    raise ValueError(f"unknown preset {name!r}; use 'tiny' or 'a100'")
+    raise ValueError(f"unknown preset {name!r}; use 'tiny', 'repo', or 'a100'")
 
 
 def a100_runtime(vram_gb: float, ram_gb: float, run: str) -> dict:

@@ -438,3 +438,280 @@ def load_npz(path: str | Path) -> tuple[np.ndarray, np.ndarray, dict]:
     data = np.load(path, allow_pickle=False)
     meta = json.loads(str(data["meta"].item()))
     return data["volume"], data["invariants"], meta
+
+
+def smear_along_t(volume: np.ndarray, smear: float) -> np.ndarray:
+    """Gaussian-blur every channel along time. `smear` is sigma as a fraction of T."""
+    t_size = int(volume.shape[0])
+    if t_size < 2 or smear <= 0:
+        return np.ascontiguousarray(volume, dtype=np.float32)
+    sigma = max(float(smear) * t_size, 1e-3)
+    radius = max(1, int(np.ceil(3.0 * sigma)))
+    grid = np.arange(-radius, radius + 1, dtype=np.float64)
+    kernel = np.exp(-0.5 * (grid / sigma) ** 2)
+    kernel /= kernel.sum()
+    out = np.zeros_like(volume, dtype=np.float32)
+    index = np.arange(t_size)
+    for shift, weight in zip(grid.astype(np.int64), kernel.astype(np.float32)):
+        src = np.clip(index - int(shift), 0, t_size - 1)
+        out += weight * volume[src]
+    return np.clip(out, 0.0, 1.0).astype(np.float32)
+
+
+def _luma(frames: np.ndarray) -> np.ndarray:
+    frames = np.asarray(frames)
+    if frames.ndim == 4:
+        rgb = frames[..., :3].astype(np.float32)
+        if float(rgb.max(initial=0.0)) > 1.5:
+            rgb = rgb / 255.0
+        return (0.2126 * rgb[..., 0] + 0.7152 * rgb[..., 1] + 0.0722 * rgb[..., 2]).astype(np.float32)
+    plane = frames.astype(np.float32)
+    if float(plane.max(initial=0.0)) > 1.5:
+        plane = plane / 255.0
+    return plane
+
+
+def _chroma(frames: np.ndarray) -> np.ndarray | None:
+    frames = np.asarray(frames)
+    if frames.ndim != 4 or frames.shape[-1] < 3:
+        return None
+    rgb = frames[..., :3].astype(np.float32)
+    if float(rgb.max(initial=0.0)) > 1.5:
+        rgb = rgb / 255.0
+    return np.abs(rgb[..., 0] - rgb[..., 2]).astype(np.float32)
+
+
+def _resize_plane(plane: np.ndarray, height: int, width: int) -> np.ndarray:
+    ys = np.clip(((np.arange(height) + 0.5) * plane.shape[0] / height).astype(np.int64), 0, plane.shape[0] - 1)
+    xs = np.clip(((np.arange(width) + 0.5) * plane.shape[1] / width).astype(np.int64), 0, plane.shape[1] - 1)
+    return plane[ys[:, None], xs]
+
+
+def _resample_time(seq: np.ndarray, t_size: int) -> np.ndarray:
+    if seq.shape[0] == t_size:
+        return seq
+    idx = np.clip(((np.arange(t_size) + 0.5) * seq.shape[0] / t_size).astype(np.int64), 0, seq.shape[0] - 1)
+    return seq[idx]
+
+
+def audio_envelope(audio: np.ndarray, t_size: int) -> np.ndarray:
+    wave = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if wave.size == 0:
+        return np.zeros(t_size, dtype=np.float32)
+    bins = np.array_split(np.abs(wave), t_size)
+    env = np.array([float(bin.mean()) if len(bin) else 0.0 for bin in bins], dtype=np.float32)
+    peak = float(env.max()) if env.size else 0.0
+    if peak > 0:
+        env = env / peak
+    return env
+
+
+def load_wav(path: str | Path) -> tuple[np.ndarray, int]:
+    """Mono waveform in [-1, 1] and the sample rate."""
+    import wave
+
+    with wave.open(str(path), "rb") as handle:
+        rate = handle.getframerate()
+        frames = handle.getnframes()
+        width = handle.getsampwidth()
+        channels = handle.getnchannels()
+        raw = handle.readframes(frames)
+    if width == 2:
+        data = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+    elif width == 1:
+        data = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+    elif width == 4:
+        data = np.frombuffer(raw, dtype=np.int32).astype(np.float32) / 2147483648.0
+    else:
+        raise ValueError(f"unsupported WAV sample width {width}")
+    if channels > 1:
+        data = data.reshape(-1, channels).mean(axis=1)
+    return data.astype(np.float32), int(rate)
+
+
+def rasterize_media(
+    frames: np.ndarray,
+    shape: tuple[int, int, int, int],
+    *,
+    audio: np.ndarray | None = None,
+    smear: float = 0.16,
+    name: str = "smear",
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Smear video (and optional audio) into the same 5-channel block a life uses.
+
+    t is the smeared timeline. x and y are the frame. z lifts bright samples
+    and audio energy off the picture plane, so a cut or a beat becomes a ridge
+    you can turn.
+    """
+    t_size, depth, height, width = shape
+    luma = _luma(frames)
+    chroma = _chroma(frames)
+    if luma.ndim != 3:
+        raise ValueError(f"frames must be (F, H, W) or (F, H, W, C), got {tuple(np.asarray(frames).shape)}")
+    resized = np.stack([_resize_plane(plane, height, width) for plane in luma], axis=0)
+    timed = _resample_time(resized, t_size)
+    chroma_t = None
+    if chroma is not None:
+        chroma_t = _resample_time(np.stack([_resize_plane(plane, height, width) for plane in chroma], axis=0), t_size)
+    delta = np.zeros_like(timed)
+    delta[1:] = np.abs(timed[1:] - timed[:-1])
+    envelope = audio_envelope(audio, t_size) if audio is not None else timed.reshape(t_size, -1).mean(axis=1)
+    volume = np.zeros((t_size, depth, height, width, N_CHANNELS), dtype=np.float32)
+    zz = (np.arange(depth, dtype=np.float32) + 0.5) / depth
+    for index in range(t_size):
+        lift = np.clip(0.22 + 0.55 * timed[index] + 0.18 * envelope[index], 0.08, 0.92)
+        z_weight = np.exp(-((zz[:, None, None] - lift[None, :, :]) ** 2) / 0.045)
+        occ = timed[index][None, :, :] * z_weight
+        volume[index, ..., OCC] = occ
+        gy, gx = np.gradient(timed[index])
+        edges = np.clip(np.hypot(gx, gy) * 3.0, 0.0, 1.0)
+        volume[index, ..., TISSUE] = edges[None, :, :] * z_weight
+        volume[index, ..., AFFECT] = envelope[index] * occ
+        volume[index, ..., SCAR] = np.clip(delta[index] * 2.4, 0.0, 1.0)[None, :, :] * z_weight
+        color = chroma_t[index] if chroma_t is not None else (0.35 + 0.65 * envelope[index]) * timed[index]
+        volume[index, ..., OTHER] = np.clip(color, 0.0, 1.0)[None, :, :] * z_weight
+    volume = smear_along_t(np.clip(volume, 0.0, 1.0), smear)
+    invariants = invariants_from_volume(volume)
+    meta = {
+        "kind": "media",
+        "name": name,
+        "other_name": "chroma",
+        "same_room": False,
+        "smear": float(smear),
+        "n_frames": int(luma.shape[0]),
+        "has_audio": audio is not None,
+        "invariants": invariants.tolist(),
+        "invariant_names": list(INVARIANT_NAMES),
+        "labels": {
+            "occupancy": "light",
+            "tissue": "edges",
+            "affect": "sound",
+            "scar": "cuts",
+            "other": "chroma",
+        },
+    }
+    meta["reading"] = media_reading(meta)
+    return volume, invariants, meta
+
+
+def media_reading(meta: dict) -> str:
+    inv = [float(v) for v in meta["invariants"]]
+    audio = "with its sound stained through the interior" if meta.get("has_audio") else "from picture alone"
+    parts = [
+        f"{meta['name']} is one smeared solid {audio}. {meta.get('n_frames', 0)} frames occupy "
+        f"{inv[0]:.0%} of t after a smear of {float(meta.get('smear', 0)):.2f}.",
+    ]
+    if inv[1] >= 0:
+        parts.append(f"A hard cut opens at t={inv[1]:.2f} and stays as a filament.")
+    else:
+        parts.append("No hard cut survives the smear as a scar.")
+    parts.append(f"The spread of the light through the block is {inv[9]:.2f}.")
+    return "\n\n".join(parts)
+
+
+def media_probe_sentence(channels: dict[str, float], x: float, y: float, z: float, t: float) -> str:
+    bits = [f"Smear x={x:.2f} y={y:.2f} z={z:.2f} t={t:.2f}."]
+    if channels["occupancy"] > 0.3:
+        bits.append("Smeared light occupies this coordinate.")
+    else:
+        bits.append("This coordinate is between frames.")
+    if channels["tissue"] > 0.3:
+        bits.append("An edge, streaked through time, is here.")
+    if channels["scar"] > 0.3:
+        bits.append("A cut or sudden change passes through this point.")
+    if channels["other"] > 0.3:
+        bits.append("Chroma or a second voice is stained here.")
+    bits.append(f"Sound on the solid: {channels['affect']:.2f}.")
+    return " ".join(bits)
+
+
+def synthetic_clip(kind: str, n_frames: int = 24, height: int = 32, width: int = 32, seed: int = 0):
+    """Return `(frames, audio)` for a built-in smear. Frames are `(F, H, W)` in 0..1."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.ogrid[0:height, 0:width]
+    cy = (height - 1) / 2.0
+    cx = (width - 1) / 2.0
+    frames = np.zeros((n_frames, height, width), dtype=np.float32)
+    samples = n_frames * 64
+    time = np.arange(samples, dtype=np.float32) / 64.0
+    if kind == "sweep":
+        for index in range(n_frames):
+            col = (index / max(n_frames - 1, 1)) * (width - 1)
+            frames[index] = np.exp(-((xx - col) ** 2) / 4.5)
+        audio = np.sin(2.0 * np.pi * (180.0 + 420.0 * (time / max(time[-1], 1e-3))) * time / n_frames)
+    elif kind == "flicker":
+        for index in range(n_frames):
+            on = 1.0 if index % 3 else 0.12
+            frames[index] = on * np.clip(1.0 - np.hypot(yy - cy, xx - cx) / (0.55 * width), 0.0, 1.0)
+            if index % 7 == 0:
+                frames[index] = np.clip(frames[index] + rng.random((height, width)).astype(np.float32) * 0.8, 0, 1)
+        audio = (np.sin(2.0 * np.pi * 8.0 * time / n_frames) > 0).astype(np.float32) * np.sin(2.0 * np.pi * 90.0 * time)
+    elif kind == "chord":
+        centers = ((0.32, 0.38), (0.68, 0.40), (0.50, 0.68))
+        freqs = (180.0, 270.0, 360.0)
+        audio = np.zeros(samples, dtype=np.float32)
+        for (fy, fx), freq in zip(centers, freqs):
+            for index in range(n_frames):
+                pulse = 0.45 + 0.55 * np.sin(2.0 * np.pi * (index / max(n_frames, 1)) + fx)
+                frames[index] = np.maximum(
+                    frames[index],
+                    pulse * np.exp(-(((yy - fy * height) ** 2 + (xx - fx * width) ** 2) / 28.0)),
+                )
+            audio += 0.33 * np.sin(2.0 * np.pi * freq * time / n_frames)
+    else:
+        kind = "pulse"
+        for index in range(n_frames):
+            radius = 1.2 + 0.85 * index
+            frames[index] = np.exp(-((np.hypot(yy - cy, xx - cx) - radius) ** 2) / 8.0)
+        audio = np.sin(2.0 * np.pi * 220.0 * time / n_frames) * np.exp(-time / max(n_frames, 1))
+    return frames, audio.astype(np.float32), kind
+
+
+def rasterize_smear(
+    shape: tuple[int, int, int, int],
+    kind: str = "pulse",
+    *,
+    smear: float = 0.16,
+    wav: str | Path | None = None,
+    frames: np.ndarray | None = None,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Build a smeared media solid from a clip kind, optional WAV, or given frames."""
+    audio = None
+    name = kind
+    if frames is None:
+        if kind == "iris-echo":
+            volume, invariants, meta = rasterize(load_iris(), shape)
+            volume = smear_along_t(volume, smear)
+            invariants = invariants_from_volume(volume)
+            meta = dict(meta)
+            meta.update(
+                {
+                    "kind": "media",
+                    "name": "Iris echo",
+                    "smear": float(smear),
+                    "n_frames": int(shape[0]),
+                    "has_audio": False,
+                    "invariants": invariants.tolist(),
+                    "labels": {
+                        "occupancy": "body",
+                        "tissue": "tissue",
+                        "affect": "affect",
+                        "scar": "scar",
+                        "other": "other",
+                    },
+                }
+            )
+            meta["reading"] = (
+                f"Iris, smeared along t by {smear:.2f}. Childhood and the deathbed bleed into "
+                "the frames between them. The tube is still one solid; the cut is thicker."
+            )
+            return volume, invariants, meta
+        frames, audio, name = synthetic_clip(kind, n_frames=max(shape[0], 12), height=shape[2], width=shape[3], seed=seed)
+    if wav is not None:
+        audio, _rate = load_wav(wav)
+        name = Path(wav).stem
+    return rasterize_media(frames, shape, audio=audio, smear=smear, name=name)
+
+
+SMEAR_KINDS = ("pulse", "sweep", "flicker", "chord", "iris-echo")

@@ -121,7 +121,9 @@ class _BlobReader:
         self.proc.wait(timeout=10)
 
 
-def _is_code(path: str, suffixes: frozenset[str]) -> bool:
+def _is_code(path: str, suffixes: frozenset[str], include: tuple[str, ...] = ()) -> bool:
+    if include and not any(path == prefix.rstrip("/") or path.startswith(prefix.rstrip("/") + "/") for prefix in include):
+        return False
     return Path(path).suffix.lower() in suffixes
 
 
@@ -233,8 +235,14 @@ def rasterize_repo(
     ref: str = "HEAD",
     max_commits: int | None = 600,
     suffixes: frozenset[str] = CODE_SUFFIXES,
+    include: tuple[str, ...] | list[str] = (),
 ) -> tuple[np.ndarray, np.ndarray, dict]:
-    """Return `(volume, invariants, meta)` for a repository's history."""
+    """Return `(volume, invariants, meta)` for a repository's history.
+
+    `include` keeps only paths under those directories, so a tree as large as Linux
+    can be held one subsystem at a time.
+    """
+    include = tuple(include)
     repo = Path(repo).resolve()
     top = Path(_git(repo, "rev-parse", "--show-toplevel").strip())
     commits = list_commits(top, ref, max_commits)
@@ -246,10 +254,13 @@ def rasterize_repo(
     paths: set[str] = set()
     for index, commit in enumerate(commits):
         diff = _changes(top, commits[index - 1].sha if index else None, commit.sha)
-        diff = [item for item in diff if any(p and _is_code(p, suffixes) for p in item[1:])]
+        diff = [item for item in diff if any(p and _is_code(p, suffixes, include) for p in item[1:])]
         changes.append(diff)
-        paths.update(p for item in diff for p in item[1:] if p and _is_code(p, suffixes))
+        paths.update(p for item in diff for p in item[1:] if p and _is_code(p, suffixes, include))
     files = sorted(paths)
+    if not files:
+        where = f" under {', '.join(include)}" if include else ""
+        raise ValueError(f"{top} has no code files{where} on {ref}")
     column = {path: k for k, path in enumerate(files)}
     bins = _bins(len(commits), t_size)
 
@@ -263,7 +274,7 @@ def rasterize_repo(
                 previous = state.pop(old_path, []) if old_path else []
                 if status == "C" and old_path:
                     state[old_path] = previous
-                if new_path is None or not _is_code(new_path, suffixes):
+                if new_path is None or not _is_code(new_path, suffixes, include):
                     continue
                 text = reader.lines(commit.sha, new_path)
                 if text is None:
@@ -286,6 +297,8 @@ def rasterize_repo(
 
     invariants = invariants_from_volume(volume)
     meta = _meta(top, commits, bins, files, bands, max_lines, main_author, sorted(written), volume, invariants)
+    meta["file_lines"] = [len(state.get(path, [])) for path in files]
+    meta["include"] = list(include)
     return volume, invariants, meta
 
 
@@ -466,6 +479,254 @@ def export_repo_npz(path: str | Path, repo: str | Path, shape: tuple[int, int, i
     return meta
 
 
+SCULPTURES = {
+    "linux": {
+        "name": "Linux",
+        "origin": "https://github.com/torvalds/linux",
+        "blurb": "The kernel as a deep, long-lived tree: many files across x, nesting down z, years along t.",
+        "files": 40,
+        "indent": 0.88,
+        "churn": 0.38,
+        "scar": 0.24,
+        "other": 0.48,
+        "growth": 0.94,
+        "defs": 0.22,
+        "theme": {"body": "#7dffb3", "tissue": "#ffe08a", "scar": "#ff8a4c", "other": "#6ec8ff", "bg": "#07140d"},
+    },
+    "doom": {
+        "name": "Doom",
+        "origin": "https://github.com/id-Software/DOOM",
+        "blurb": "A compact C worldtube. Historic bugs open as amber filaments and stay in the wad of the engine.",
+        "files": 11,
+        "indent": 0.34,
+        "churn": 0.22,
+        "scar": 0.58,
+        "other": 0.16,
+        "growth": 0.52,
+        "defs": 0.18,
+        "theme": {"body": "#ffb38a", "tissue": "#ff5d6a", "scar": "#ffd36a", "other": "#c48bff", "bg": "#140807"},
+    },
+    "git": {
+        "name": "Git",
+        "origin": "https://github.com/git/git",
+        "blurb": "A history that records histories. Merge bursts stain the other-author channel; fix lines persist.",
+        "files": 22,
+        "indent": 0.55,
+        "churn": 0.44,
+        "scar": 0.30,
+        "other": 0.42,
+        "growth": 0.80,
+        "defs": 0.16,
+        "theme": {"body": "#ffb070", "tissue": "#ffd27a", "scar": "#ff7a4a", "other": "#9ad7ff", "bg": "#141007"},
+    },
+    "cpython": {
+        "name": "CPython",
+        "origin": "https://github.com/python/cpython",
+        "blurb": "The language as a thick tube: interpreter core on one side of x, the standard library spreading out.",
+        "files": 28,
+        "indent": 0.62,
+        "churn": 0.33,
+        "scar": 0.26,
+        "other": 0.50,
+        "growth": 0.88,
+        "defs": 0.24,
+        "theme": {"body": "#ffe566", "tissue": "#4d8cff", "scar": "#ffb45c", "other": "#7ad1ff", "bg": "#0b1020"},
+    },
+    "redis": {
+        "name": "Redis",
+        "origin": "https://github.com/redis/redis",
+        "blurb": "A tight in-memory engine. Definitions sit in a few wide columns; scars mark old protocol edges.",
+        "files": 14,
+        "indent": 0.40,
+        "churn": 0.28,
+        "scar": 0.32,
+        "other": 0.28,
+        "growth": 0.70,
+        "defs": 0.20,
+        "theme": {"body": "#ff6b6b", "tissue": "#ffd166", "scar": "#ffa94d", "other": "#74c0fc", "bg": "#14080c"},
+    },
+    "sqlite": {
+        "name": "SQLite",
+        "origin": "https://github.com/sqlite/sqlite",
+        "blurb": "One dense amalgam. Almost a single file stretched across x, with deep nesting and a long, quiet t.",
+        "files": 6,
+        "indent": 0.72,
+        "churn": 0.18,
+        "scar": 0.20,
+        "other": 0.12,
+        "growth": 0.76,
+        "defs": 0.14,
+        "theme": {"body": "#63e6be", "tissue": "#ffd43b", "scar": "#ff922b", "other": "#91a7ff", "bg": "#071210"},
+    },
+}
+
+
+def list_sculptures() -> list[dict]:
+    return [
+        {
+            "id": key,
+            "name": spec["name"],
+            "origin": spec["origin"],
+            "blurb": spec["blurb"],
+            "theme": spec["theme"],
+            "ambient": True,
+        }
+        for key, spec in SCULPTURES.items()
+    ]
+
+
+def _paint_column(
+    frame: np.ndarray,
+    x0: int,
+    x1: int,
+    density: float,
+    indent: float,
+    defs: float,
+    churn: float,
+    scar: float,
+    other: float,
+    rng: np.random.Generator,
+) -> None:
+    depth, height, _width, _channels = frame.shape
+    if x1 <= x0:
+        return
+    occupancy = (rng.random((depth, height)) < density).astype(np.float32)
+    z = np.linspace(0.0, 1.0, depth, dtype=np.float32)[:, None]
+    occupancy *= np.clip(1.15 - 0.85 * np.abs(z - indent), 0.05, 1.0)
+    y = np.linspace(1.0, 0.0, height, dtype=np.float32)[None, :]
+    occupancy *= np.clip(0.35 + 0.9 * y, 0.08, 1.0)
+    plane = np.zeros((depth, height, N_CHANNELS), dtype=np.float32)
+    plane[..., OCC] = occupancy
+    plane[..., TISSUE] = occupancy * (rng.random((depth, height)) < defs).astype(np.float32)
+    plane[..., AFFECT] = occupancy * churn
+    plane[..., SCAR] = occupancy * (rng.random((depth, height)) < scar).astype(np.float32)
+    plane[..., OTHER] = occupancy * (rng.random((depth, height)) < other).astype(np.float32)
+    frame[:, :, x0:x1, :] = np.maximum(frame[:, :, x0:x1, :], plane[:, :, None, :])
+
+
+def ambient_sculpture(
+    kind: str,
+    shape: tuple[int, int, int, int],
+    *,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """A stylized 4D sculpture of a famous tree, without cloning the repository."""
+    if kind not in SCULPTURES:
+        raise ValueError(f"unknown sculpture {kind!r}; choose from {', '.join(SCULPTURES)}")
+    spec = SCULPTURES[kind]
+    rng = np.random.default_rng(int(seed) + sum(ord(char) for char in kind))
+    t_size, depth, height, width = shape
+    volume = np.zeros((t_size, depth, height, width, N_CHANNELS), dtype=np.float32)
+    n_files = max(2, min(int(spec["files"]), width))
+    bands = _file_bands(n_files, width)
+    scar_open = 0.18 + 0.45 * rng.random()
+    meet = 0.28 + 0.4 * rng.random()
+    files = [f"{kind}/{index:02d}.c" for index in range(n_files)]
+    for t_index in range(t_size):
+        t_frac = (t_index + 0.5) / t_size
+        grown = min(n_files, max(1, int(round(1 + (n_files - 1) * min(t_frac / max(spec["growth"], 1e-3), 1.0)))))
+        frame = volume[t_index]
+        for file_index in range(grown):
+            x0, x1 = bands[file_index]
+            age = t_frac
+            density = 0.18 + 0.55 * min(age / 0.4, 1.0) * (0.7 + 0.6 * rng.random())
+            churn = float(spec["churn"]) * (0.35 + 0.9 * rng.random())
+            if t_index > 0 and rng.random() < 0.22:
+                churn = min(1.0, churn + 0.45)
+            scar = float(spec["scar"]) if t_frac >= scar_open else 0.0
+            other = float(spec["other"]) if t_frac >= meet else 0.02
+            _paint_column(
+                frame,
+                x0,
+                x1,
+                density=density,
+                indent=float(spec["indent"]),
+                defs=float(spec["defs"]),
+                churn=churn,
+                scar=scar * (0.5 + 0.5 * rng.random()),
+                other=other,
+                rng=rng,
+            )
+    invariants = invariants_from_volume(volume)
+    meta = {
+        "kind": "sculpture",
+        "sculpture": kind,
+        "name": spec["name"],
+        "other_name": "other authors",
+        "origin": spec["origin"],
+        "blurb": spec["blurb"],
+        "theme": spec["theme"],
+        "same_room": False,
+        "ambient": True,
+        "files": files,
+        "bands": [list(band) for band in bands],
+        "max_lines": height * 4,
+        "max_indent": MAX_INDENT,
+        "invariants": invariants.tolist(),
+        "invariant_names": list(INVARIANT_NAMES),
+        "labels": {
+            "occupancy": "code",
+            "tissue": "definitions",
+            "affect": "churn",
+            "scar": "fix lines",
+            "other": "other authors",
+        },
+    }
+    meta["reading"] = (
+        f"{spec['name']} as an ambient sculpture. {spec['blurb']} "
+        f"This block is a characteristic solid, not a clone of {spec['origin']}."
+    )
+    if invariants[1] >= 0:
+        meta["reading"] += f" The first scar opens at t={invariants[1]:.2f} and stays."
+    return volume, invariants, meta
+
+
+def sculpture_probe_sentence(meta: dict, channels: dict[str, float], x: float, y: float, z: float, t: float) -> str:
+    bits = [f"{meta['name']} sculpture at t={t:.2f}."]
+    files = meta.get("files") or []
+    bands = meta.get("bands") or []
+    if files and bands:
+        width = max(band[1] for band in bands)
+        column = min(int(float(x) * width), max(width - 1, 0))
+        name = next((files[k] for k, band in enumerate(bands) if band[0] <= column < band[1]), None)
+        if name:
+            bits.append(f"x={x:.2f} is the {name} column.")
+    if channels["occupancy"] > 0.3:
+        bits.append("Code occupies this coordinate.")
+    else:
+        bits.append("A gap in the sculpture.")
+    if channels["tissue"] > 0.3:
+        bits.append("A definition sits here.")
+    if channels["scar"] > 0.3:
+        bits.append("A historic fix filament passes through.")
+    if channels["other"] > 0.3:
+        bits.append("Another author's lines are stained here.")
+    bits.append(f"Churn: {channels['affect']:.0%}.")
+    return " ".join(bits)
+
+
+def hold_sculpture(
+    name: str,
+    shape: tuple[int, int, int, int],
+    *,
+    repo: str | Path | None = None,
+    seed: int = 0,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Hold a famous tree as a sculpture, or rasterize a local clone if `repo` is set."""
+    key = name.strip().lower()
+    if repo:
+        volume, invariants, meta = rasterize_repo(repo, shape)
+        if key in SCULPTURES:
+            spec = SCULPTURES[key]
+            meta = dict(meta)
+            meta["sculpture"] = key
+            meta["theme"] = spec["theme"]
+            meta["origin"] = spec["origin"]
+            meta["blurb"] = spec["blurb"]
+        return volume, invariants, meta
+    return ambient_sculpture(key, shape, seed=seed)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Rasterize a git repository's history into a 4D block")
     parser.add_argument("repo", nargs="?", default=".")
@@ -473,8 +734,18 @@ def main() -> None:
     parser.add_argument("--ref", default="HEAD")
     parser.add_argument("--max-commits", type=int, default=600)
     parser.add_argument("--shape", type=int, nargs=4, default=[16, 32, 32, 32], metavar=("T", "D", "H", "W"))
+    parser.add_argument("--include", nargs="*", default=[], help="Only hold paths under these directories")
+    parser.add_argument("--sculpture", default=None, choices=sorted(SCULPTURES), help="Ambient sculpture instead of a clone")
     args = parser.parse_args()
-    meta = export_repo_npz(args.out, args.repo, tuple(args.shape), ref=args.ref, max_commits=args.max_commits)
+    if args.sculpture:
+        volume, invariants, meta = ambient_sculpture(args.sculpture, tuple(args.shape))
+        path = Path(args.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(path, volume=volume, invariants=invariants, meta=np.asarray(json.dumps(meta)))
+    else:
+        meta = export_repo_npz(
+            args.out, args.repo, tuple(args.shape), ref=args.ref, max_commits=args.max_commits, include=args.include
+        )
     print(meta["reading"])
     print(f"\nwrote {args.out}")
 

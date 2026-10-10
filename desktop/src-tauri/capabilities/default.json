@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Main 4D Mind platform window",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
