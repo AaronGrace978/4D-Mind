@@ -4,7 +4,7 @@
 import json
 from pathlib import Path
 
-BRANCH = "cursor/4d-block-mind-d0d3"
+BRANCH = "main"
 
 
 def cell(kind, source):
