@@ -285,15 +285,26 @@ def generate_from_latent(
     attention = torch.ones(inputs.shape[:2], dtype=torch.long, device=embeds.device)
     stops = stop_ids(tokenizer)
     made: list[int] = []
+    past = None
+    # One new token per step. Replaying the whole prompt each time does not fit
+    # beside a 7B model on a 16GB card.
     for _ in range(max_new_tokens):
-        logits = language(inputs_embeds=inputs, attention_mask=attention).logits[:, -1]
-        nxt = int(logits.argmax(dim=-1).item())
+        out = language(
+            inputs_embeds=inputs,
+            attention_mask=attention,
+            past_key_values=past,
+            use_cache=True,
+        )
+        past = out.past_key_values
+        nxt = int(out.logits[:, -1].argmax(dim=-1).item())
         if nxt in stops:
             break
         made.append(nxt)
-        nxt_embed = language.get_input_embeddings()(torch.tensor([[nxt]], device=embeds.device))
-        inputs = torch.cat([inputs, nxt_embed], dim=1)
-        attention = torch.ones(inputs.shape[:2], dtype=torch.long, device=embeds.device)
+        inputs = language.get_input_embeddings()(torch.tensor([[nxt]], device=embeds.device))
+        attention = torch.cat(
+            [attention, torch.ones((1, 1), dtype=torch.long, device=embeds.device)],
+            dim=1,
+        )
     return tokenizer.decode(made, skip_special_tokens=True).strip()
 
 

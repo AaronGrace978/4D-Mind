@@ -146,19 +146,29 @@ class LoraVoice:
         from pathlib import Path
 
         import torch
-        from peft import PeftModel
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from peft import AutoPeftModelForCausalLM
+        from transformers import AutoTokenizer
 
         from tesseract.lora_voice import dtype_kwargs
-        from tesseract.train import load_checkpoint, pick_device
+        from tesseract.train import load_checkpoint
 
-        self.device = pick_device("auto")
-        self.encoder, self.cfg, _blob = load_checkpoint(resident_ckpt, self.device)
+        self.device = torch.device("cpu")
+        self.encoder, self.cfg, _blob = load_checkpoint(resident_ckpt, "cpu")
         self.encoder.eval()
         blob = torch.load(Path(lora_dir) / "bridge.pt", map_location="cpu", weights_only=False)
         self.tokenizer = AutoTokenizer.from_pretrained(lora_dir)
-        base = AutoModelForCausalLM.from_pretrained(blob["base"], device_map="auto", **dtype_kwargs(torch.bfloat16))
-        self.language = PeftModel.from_pretrained(base, lora_dir).eval()
+        # The 4D encoder stays on CPU. Qwen and the adapter load together onto the
+        # GPU when one is present. Loading the adapter after a disk offload drops it.
+        if torch.cuda.is_available():
+            place = {"": 0}
+            print(f"Qwen voice on {torch.cuda.get_device_name(0)}", flush=True)
+        else:
+            place = {"": "cpu"}
+        self.language = AutoPeftModelForCausalLM.from_pretrained(
+            lora_dir,
+            device_map=place,
+            **dtype_kwargs(torch.bfloat16),
+        ).eval()
         self.encoder.set_lm_hidden(int(blob["lm_hidden"]))
         self.encoder.soft.load_state_dict(blob["soft"])
         self.bridge = self.encoder.soft.to(self.device).eval()

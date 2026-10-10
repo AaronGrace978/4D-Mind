@@ -1,4 +1,4 @@
-"""The four studios of the 4D Mind platform."""
+"""The studios of the 4D Mind platform."""
 
 from __future__ import annotations
 
@@ -25,6 +25,12 @@ STUDIOS = (
         "title": "Resident",
         "goal": "A character who sees past and future at once",
         "blurb": "Stand at one instant. The resident answers from there, and from every other.",
+    },
+    {
+        "id": "coder",
+        "title": "Coder",
+        "goal": "Ollama Cloud coder for the files behind the solid",
+        "blurb": "Read the source the dots stand for and propose a fix with a cloud model.",
     },
     {
         "id": "smear",

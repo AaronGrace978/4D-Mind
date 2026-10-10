@@ -12,7 +12,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from tesseract.character import Resident, voice_from_env
-from tesseract.codeblock import SCULPTURES, hold_sculpture, repo_probe_sentence, rasterize_repo
+from tesseract.codeblock import SCULPTURES, file_at, hold_sculpture, repo_probe_sentence, rasterize_repo
+from tesseract.coder import CoderError, ask as ask_coder
+from tesseract.ollama_cloud import api_key, default_model, fallback_models, list_models
 from tesseract.life import SMEAR_KINDS, load_iris, load_npz, media_probe_sentence, rasterize, rasterize_smear
 from tesseract.platform import catalog
 from tesseract.viewdata import probe_channels, sample_field_at_points, sample_points, slice_image
@@ -51,7 +53,10 @@ class BlockWorld:
         self.model = _risk_model()
         self.resident = Resident(voice_from_env())
         self.chat: list[dict] = []
+        self.coder_chat: list[dict] = []
         self.risk_cache: dict | None = None
+        self.source: Path | None = None
+        self.ollama_key = api_key()
         self.load(npz=npz, repo=repo, sculpture=sculpture)
 
     def load(
@@ -75,11 +80,15 @@ class BlockWorld:
             volume, invariants, meta = rasterize(load_iris(), self.shape)
         points = sample_points(volume)
         reading = meta.get("reading") or describe(meta)
+        root = meta.get("root")
+        source = Path(root) if root and Path(root).is_dir() else None
         with self.lock:
             self.volume, self.invariants, self.meta = volume, invariants, meta
             self.points = points
             self.reading = reading
+            self.source = source
             self.chat = []
+            self.coder_chat = []
             self.risk_cache = None
 
     @property
@@ -93,7 +102,10 @@ class BlockWorld:
     def block_payload(self) -> dict:
         kind = self.kind
         if kind == "repo":
-            subtitle = "A repository's whole history, held as one solid. Commits are an axis you can turn."
+            subtitle = (
+                "Each dot is a line of this repository, placed by file, line, and commit. "
+                "The text stays on disk. Click a dot to name the file."
+            )
         elif kind == "sculpture":
             subtitle = f"{self.meta['name']} as an ambient sculpture. Time is an axis you can turn."
         elif kind == "media":
@@ -112,6 +124,7 @@ class BlockWorld:
             "shape": list(self.volume.shape),
             "theme": self.meta.get("theme"),
             "voice": self.resident.backend,
+            "has_source": self.source is not None,
             "studio": kind if kind in {"sculpture", "media"} else ("scan" if kind == "repo" else "resident"),
         }
 
@@ -127,7 +140,10 @@ class BlockWorld:
             sentence = media_probe_sentence(channels, x, y, z, t)
         else:
             sentence = probe_sentence(channels, x, y, z, t)
-        return {"x": x, "y": y, "z": z, "t": t, "channels": channels, "sentence": sentence}
+        payload = {"x": x, "y": y, "z": z, "t": t, "channels": channels, "sentence": sentence}
+        if self.is_repo:
+            payload["file"] = file_at(self.meta, x)
+        return payload
 
     def slice_payload(self, axis: str, value: float) -> dict:
         image = slice_image(self.volume, axis, value)
@@ -160,6 +176,44 @@ class BlockWorld:
         self.chat = self.chat[-16:]
         return reply
 
+    def models_payload(self) -> dict:
+        try:
+            models = list_models()
+            error = ""
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            models = fallback_models()
+            error = str(exc)
+        return {
+            "models": models,
+            "default": default_model(models),
+            "key_set": bool(self.ollama_key),
+            "error": error,
+        }
+
+    def set_ollama_key(self, key: str) -> None:
+        self.ollama_key = key.strip()
+
+    def code(self, query: str, model: str, focus: str | None) -> dict:
+        with self.lock:
+            meta = self.meta
+            source = self.source
+            volume = self.volume
+            key = self.ollama_key
+            risk_model = self.model
+        hotspots: list[dict] = []
+        if source is not None and meta.get("kind") == "repo":
+            from tesseract.risk import report
+
+            raw = report(volume, meta, risk_model)
+            raw.pop("risk", None)
+            hotspots = raw.get("hotspots") or []
+        chosen = model.strip() or (self.models_payload().get("default") or "")
+        reply = ask_coder(meta, source, query, chosen, key, hotspots=hotspots, focus=focus)
+        self.coder_chat.append({"role": "user", "content": query})
+        self.coder_chat.append({"role": "assistant", "content": reply["text"]})
+        self.coder_chat = self.coder_chat[-12:]
+        return reply
+
 
 def _read_json(handler: SimpleHTTPRequestHandler) -> dict:
     length = int(handler.headers.get("Content-Length", "0"))
@@ -187,6 +241,9 @@ def make_handler(world: BlockWorld):
                 return
             if parsed.path == "/api/risk":
                 self._json(world.risk_payload())
+                return
+            if parsed.path == "/api/models":
+                self._json(world.models_payload())
                 return
             if parsed.path == "/api/probe":
                 query = parse_qs(parsed.query)
@@ -233,6 +290,27 @@ def make_handler(world: BlockWorld):
                     self._json({"error": str(exc)}, status=400)
                     return
                 self._json(payload)
+                return
+            if path == "/api/coder":
+                try:
+                    request = _read_json(self)
+                    payload = world.code(
+                        str(request.get("query", "")),
+                        str(request.get("model", "")),
+                        str(request.get("file") or "").strip() or None,
+                    )
+                except CoderError as exc:
+                    self._json({"error": str(exc)}, status=400)
+                    return
+                except RuntimeError as exc:
+                    self._json({"error": str(exc)}, status=502)
+                    return
+                self._json(payload)
+                return
+            if path == "/api/ollama/key":
+                request = _read_json(self)
+                world.set_ollama_key(str(request.get("key", "")))
+                self._json({"key_set": bool(world.ollama_key)})
                 return
             if path == "/api/smear":
                 try:

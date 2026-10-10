@@ -283,7 +283,13 @@ select {
 
 #open-status:empty { display: none; }
 
-#open-status.error { color: var(--tissue); }
+#open-status.error, #key-status.error { color: var(--tissue); }
+
+#coder-focus, #key-status {
+  margin: 0 0 10px;
+  color: var(--dim);
+  font-size: 12px;
+}
 
 #count-readout {
   margin: 0;

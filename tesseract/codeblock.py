@@ -395,6 +395,7 @@ def _meta(
         "n_commits": len(commits),
         "first_date": _iso(commits[0].time),
         "last_date": _iso(commits[-1].time),
+        "root": str(top),
         "files": files,
         "bands": [list(band) for band in bands[: len(files)]],
         "slices": slices,
@@ -443,6 +444,17 @@ def repo_reading(meta: dict) -> str:
         t_peak = peak / (len(meta["slices"]) - 1)
         parts.append(f"Churn peaks at t={t_peak:.2f}, {_commit_text(meta['slices'][peak])}.")
     return "\n\n".join(parts)
+
+
+def file_at(meta: dict, x: float) -> str | None:
+    """The repository file whose band contains normalized x."""
+    files = meta.get("files") or []
+    bands = meta.get("bands") or []
+    if not files or not bands:
+        return None
+    width = max(int(band[1]) for band in bands)
+    column = min(int(float(x) * width), max(width - 1, 0))
+    return next((files[index] for index, band in enumerate(bands) if band[0] <= column < band[1]), None)
 
 
 def repo_probe_sentence(meta: dict, channels: dict[str, float], x: float, y: float, z: float, t: float) -> str:

@@ -170,6 +170,11 @@ async function probe(point, screen) {
   const payload = await response.json();
   probeOut.textContent = payload.sentence;
   state.marker = screen;
+  if (payload.file) {
+    state.focusFile = payload.file;
+    const focus = document.getElementById("coder-focus");
+    if (focus) focus.textContent = `Focused file: ${payload.file}`;
+  }
   draw();
 }
 
@@ -282,6 +287,7 @@ function showStudio(id) {
     panel.classList.toggle("hidden", panel.id !== `panel-${id}`);
   }
   if (id === "scan") loadRisk();
+  if (id === "coder") loadModels();
 }
 
 document.getElementById("studios").addEventListener("click", (event) => {
@@ -379,6 +385,11 @@ async function boot() {
   document.title = `4D Mind — ${payload.name}`;
   applyTheme(payload.theme);
   document.getElementById("chat").innerHTML = "";
+  document.getElementById("coder-chat").innerHTML = "";
+  state.focusFile = "";
+  document.getElementById("coder-focus").textContent = payload.has_source
+    ? "Click a dot to focus a file. The coder reads that file from disk."
+    : "This solid has no checkout. Hold a folder before asking the coder.";
   for (const [channel, label] of Object.entries(payload.labels || {})) {
     const node = document.getElementById(`label-${channel}`);
     if (node) node.textContent = label;
@@ -412,6 +423,90 @@ document.getElementById("ask-form").addEventListener("submit", async (event) => 
   } catch (error) {
     addChat("them", String(error.message || error));
   }
+});
+
+function addCoderLine(role, text) {
+  const chat = document.getElementById("coder-chat");
+  const line = document.createElement("p");
+  line.className = role === "user" ? "you" : "them";
+  line.textContent = text;
+  chat.appendChild(line);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+async function loadModels() {
+  const select = document.getElementById("coder-model");
+  const status = document.getElementById("key-status");
+  const response = await fetch("/api/models");
+  const payload = await response.json();
+  const previous = select.value;
+  select.innerHTML = "";
+  for (const model of payload.models || []) {
+    const option = document.createElement("option");
+    option.value = model.name;
+    option.textContent = model.coder ? `${model.name}  · coder` : model.name;
+    select.appendChild(option);
+  }
+  const preferred = previous || payload.default;
+  if (preferred && [...select.options].some((option) => option.value === preferred)) {
+    select.value = preferred;
+  }
+  status.className = payload.key_set ? "" : "error";
+  status.textContent = payload.key_set
+    ? "Cloud key is set for this session."
+    : "Paste an Ollama Cloud API key. Create one under Settings → API keys on ollama.com.";
+}
+
+async function askCoder(question) {
+  const query = question.trim();
+  if (!query) return;
+  addCoderLine("user", query);
+  const response = await fetch("/api/coder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      model: document.getElementById("coder-model").value,
+      file: state.focusFile || "",
+    }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || response.statusText);
+  const files = (payload.files || []).join(", ");
+  addCoderLine("them", files ? `${payload.text}\n\nRead: ${files}` : payload.text);
+}
+
+document.getElementById("key-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("ollama-key");
+  const response = await fetch("/api/ollama/key", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: input.value }),
+  });
+  const payload = await response.json();
+  input.value = "";
+  const status = document.getElementById("key-status");
+  status.className = payload.key_set ? "" : "error";
+  status.textContent = payload.key_set ? "Cloud key is set for this session." : "Key cleared.";
+});
+
+document.getElementById("coder-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const input = document.getElementById("coder-ask");
+  const query = input.value;
+  input.value = "";
+  try {
+    await askCoder(query);
+  } catch (error) {
+    addCoderLine("them", String(error.message || error));
+  }
+});
+
+document.getElementById("coder-hot").addEventListener("click", () => {
+  askCoder("What is the most likely bug in the focused file or the hottest spot, and what is the fix?").catch((error) => {
+    addCoderLine("them", String(error.message || error));
+  });
 });
 
 document.getElementById("wav-form").addEventListener("submit", async (event) => {
