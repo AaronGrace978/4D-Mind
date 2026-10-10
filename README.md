@@ -4,7 +4,7 @@ An AI whose input is not a timeline. A life is one 4D solid: every side, the int
 
 The heavy run is a notebook for a Colab Pro A100 with high RAM. This repo is the model, that notebook, and a viewer for the solid.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AaronGrace978/4D-Mind/blob/cursor/4d-block-mind-d0d3/notebooks/4d_mind_a100.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AaronGrace978/4D-Mind/blob/main/notebooks/4d_mind_a100.ipynb)
 
 ## What gets trained
 

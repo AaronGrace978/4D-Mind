@@ -14,7 +14,7 @@ def test_colab_notebook_has_the_training_stages():
     for phrase in (
         "A100",
         "requirements-colab.txt",
-        "cursor/4d-block-mind-d0d3",
+        'BRANCH = "main"',
         "MyDrive/4d-mind",
         "PRESET",
         "run_training",
@@ -28,6 +28,8 @@ def test_colab_notebook_has_the_training_stages():
         '"uninstall", "-y", "-q", "torchao"',
         "RESUME = True",
         '"reset", "--hard"',
+        'module.startswith("tesseract.")',
+        "Restart session",
     ):
         assert phrase in joined, phrase
     # Install after the repo is present, so the requirements file exists.
