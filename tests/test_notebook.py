@@ -25,6 +25,9 @@ def test_colab_notebook_has_the_training_stages():
         "train_voice",
         "Qwen",
         "launch",
+        '"uninstall", "-y", "-q", "torchao"',
+        "RESUME = True",
+        '"reset", "--hard"',
     ):
         assert phrase in joined, phrase
     # Install after the repo is present, so the requirements file exists.
@@ -35,3 +38,17 @@ def test_colab_notebook_has_the_training_stages():
         if item["cell_type"] != "code":
             continue
         ast.parse("".join(item["source"]))
+
+
+def test_notebook_matches_its_generator(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+
+    source = Path("notebooks/build_notebook.py")
+    copy = tmp_path / "build_notebook.py"
+    shutil.copy(source, copy)
+    subprocess.check_call([sys.executable, str(copy)], stdout=subprocess.DEVNULL)
+    built = (tmp_path / "4d_mind_a100.ipynb").read_text(encoding="utf-8")
+    committed = Path("notebooks/4d_mind_a100.ipynb").read_text(encoding="utf-8")
+    assert built == committed, "run python3 notebooks/build_notebook.py"
