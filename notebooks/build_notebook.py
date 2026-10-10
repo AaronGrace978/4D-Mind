@@ -351,19 +351,18 @@ torch.cuda.empty_cache()
 cells.append(cell("markdown", """
 ## Look
 
-Rotate time into x, cut the block, and ask. The resident answers from the whole solid. The witness answers from the causal twin, pooled only up to the cut. Set `SHARE = True` for a public link that works outside this tab.
+Rotate time into x, cut the block, and ask. The resident answers from the whole solid. The witness answers from the causal twin, pooled only up to the cut.
+
+Open the `https://....gradio.live` link the cell prints. Colab also offers a `*.prod.colab.dev` address for port 7860, and that page returns 404.
 """))
 
 cells.append(cell("code", """
 from tesseract.gradio_app import launch
 
-SHARE = False
-
 launch(
     resident_ckpt=str(OUT / "iris_resident.pt"),
     causal_ckpt=str(OUT / "causal_twin.pt"),
     lora_dir=str(OUT / "qwen_block_lora"),
-    share=SHARE,
 )
 """))
 

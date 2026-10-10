@@ -3,6 +3,7 @@ import threading
 from urllib.request import urlopen
 
 from tesseract.demo import make_server
+from tesseract.gradio_app import public_share
 
 
 def test_viewer_api_serves_iris_block_slice_and_probe():
@@ -36,3 +37,11 @@ def test_viewer_api_serves_iris_block_slice_and_probe():
         assert world.meta["name"] == "Iris"
     finally:
         server.shutdown()
+
+
+def test_colab_demo_publishes_a_public_link():
+    assert public_share(False, in_colab=True) is True
+    assert public_share(None, in_colab=True) is True
+    assert public_share(False, in_colab=False) is False
+    assert public_share(None, in_colab=False) is False
+    assert public_share(True, in_colab=False) is True

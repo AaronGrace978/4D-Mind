@@ -25,6 +25,7 @@ def test_colab_notebook_has_the_training_stages():
         "train_voice",
         "Qwen",
         "launch",
+        "gradio.live",
         '"uninstall", "-y", "-q", "torchao"',
         "RESUME = True",
         '"reset", "--hard"',

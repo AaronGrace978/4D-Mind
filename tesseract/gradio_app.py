@@ -149,9 +149,28 @@ def build_interface(resident_ckpt: str, causal_ckpt: str | None = None, lora_dir
     return demo
 
 
-def launch(resident_ckpt: str, causal_ckpt: str | None = None, lora_dir: str | None = None, share: bool = False) -> None:
+def public_share(share: bool | None, *, in_colab: bool) -> bool:
+    """On Colab, always publish a gradio.live URL.
+
+    Colab rewrites Gradio's localhost link into a ``*.prod.colab.dev`` address, and that address returns 404.
+    """
+    if in_colab:
+        return True
+    return False if share is None else share
+
+
+def launch(resident_ckpt: str, causal_ckpt: str | None = None, lora_dir: str | None = None, share: bool | None = None) -> None:
+    import os
+
     import torch
 
+    in_colab = "COLAB_RELEASE_TAG" in os.environ
+    share = public_share(share, in_colab=in_colab)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     demo = build_interface(resident_ckpt, causal_ckpt=causal_ckpt, lora_dir=lora_dir, device=device)
+    if in_colab:
+        print(
+            "Open the https://....gradio.live link printed below. "
+            "The *.prod.colab.dev address returns 404."
+        )
     demo.launch(share=share)
