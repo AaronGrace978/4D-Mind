@@ -1,0 +1,16 @@
+{
+  "name": "Iris",
+  "other_name": "Jun",
+  "story": "Iris begins and ends in the same room. The bed at the close occupies the coordinates of the childhood floor. A scar opens on the left forearm and stays in the solid until the tube ends. Jun's worldline touches hers once, a joint, and then diverges.",
+  "seed": 7,
+  "lifespan": 0.9,
+  "room": [0.5, 0.46, 0.5],
+  "return_to_room": true,
+  "wander": 0.14,
+  "scar_t": 0.42,
+  "scar_radius": 0.045,
+  "meet_t": 0.58,
+  "meet_mode": "alongside",
+  "grow": [0.32, 0.66],
+  "affect_keyframes": [[0.0, 0.86], [0.28, 0.42], [0.62, 0.2], [0.86, 0.58]]
+}
