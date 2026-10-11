@@ -348,3 +348,20 @@ select {
   .layout { grid-template-columns: 1fr; }
   #stage { height: 62vh; }
 }
+
+#tensor-list {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 1.4em;
+  font: 11px/1.5 ui-monospace, monospace;
+}
+
+#tensor-list li {
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#tensor-list li:hover {
+  color: #fff;
+}

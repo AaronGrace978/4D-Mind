@@ -19,6 +19,7 @@ from tesseract.life import SMEAR_KINDS, load_iris, load_npz, media_probe_sentenc
 from tesseract.platform import catalog
 from tesseract.viewdata import probe_channels, sample_field_at_points, sample_points, slice_image
 from tesseract.voice_text import describe, probe_sentence
+from tesseract.weightblock import hold_weights, is_weight_source, weights_probe_sentence
 
 WEB_ROOT = Path(__file__).resolve().parents[1] / "web"
 VIEW_SHAPE = (16, 32, 32, 32)
@@ -47,6 +48,7 @@ class BlockWorld:
         shape: tuple[int, int, int, int] = VIEW_SHAPE,
         repo: str | None = None,
         sculpture: str | None = None,
+        weights: str | None = None,
     ) -> None:
         self.shape = shape
         self.lock = threading.Lock()
@@ -57,7 +59,7 @@ class BlockWorld:
         self.risk_cache: dict | None = None
         self.source: Path | None = None
         self.ollama_key = api_key()
-        self.load(npz=npz, repo=repo, sculpture=sculpture)
+        self.load(npz=npz, repo=repo, sculpture=sculpture, weights=weights)
 
     def load(
         self,
@@ -67,8 +69,11 @@ class BlockWorld:
         smear: str | None = None,
         smear_amount: float = 0.16,
         wav: str | None = None,
+        weights: str | None = None,
     ) -> None:
-        if smear:
+        if weights:
+            volume, invariants, meta = hold_weights(weights, self.shape)
+        elif smear:
             volume, invariants, meta = rasterize_smear(self.shape, smear, smear=smear_amount, wav=wav)
         elif sculpture:
             volume, invariants, meta = hold_sculpture(sculpture, self.shape, repo=repo)
@@ -108,6 +113,11 @@ class BlockWorld:
             )
         elif kind == "sculpture":
             subtitle = f"{self.meta['name']} as an ambient sculpture. Time is an axis you can turn."
+        elif kind == "weights":
+            subtitle = (
+                f"{self.meta['name']}: every tensor as a slice of t, output unit on x, input unit on y, "
+                "magnitude up z. Click a dot to read the layer."
+            )
         elif kind == "media":
             subtitle = f"{self.meta['name']}, smeared into one solid. Time is thick."
         else:
@@ -125,6 +135,7 @@ class BlockWorld:
             "theme": self.meta.get("theme"),
             "voice": self.resident.backend,
             "has_source": self.source is not None,
+            "tensors": self.meta.get("tensors") if kind == "weights" else None,
             "studio": kind if kind in {"sculpture", "media"} else ("scan" if kind == "repo" else "resident"),
         }
 
@@ -136,6 +147,8 @@ class BlockWorld:
             from tesseract.codeblock import sculpture_probe_sentence
 
             sentence = sculpture_probe_sentence(self.meta, channels, x, y, z, t)
+        elif self.kind == "weights":
+            sentence = weights_probe_sentence(self.meta, channels, x, y, z, t)
         elif self.kind == "media":
             sentence = media_probe_sentence(channels, x, y, z, t)
         else:
@@ -341,13 +354,15 @@ def make_handler(world: BlockWorld):
                     world.load(sculpture=sculpture, repo=source or None)
                 elif not source:
                     world.load()
+                elif is_weight_source(source):
+                    world.load(weights=source)
                 elif source.lower() in SCULPTURES:
                     world.load(sculpture=source.lower())
                 elif source.endswith(".npz"):
                     world.load(npz=source)
                 else:
                     world.load(repo=source)
-            except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as exc:
+            except (OSError, ValueError, KeyError, ImportError, subprocess.CalledProcessError) as exc:
                 detail = getattr(exc, "stderr", None) or str(exc)
                 self._json({"error": f"could not hold {source or 'Iris'}: {str(detail).strip()}"}, status=400)
                 return
@@ -372,8 +387,9 @@ def make_server(
     shape=VIEW_SHAPE,
     repo: str | None = None,
     sculpture: str | None = None,
+    weights: str | None = None,
 ):
-    world = BlockWorld(npz=npz, shape=shape, repo=repo, sculpture=sculpture)
+    world = BlockWorld(npz=npz, shape=shape, repo=repo, sculpture=sculpture, weights=weights)
     server = ThreadingHTTPServer((host, port), make_handler(world))
     return server, world
 
@@ -385,11 +401,12 @@ def main() -> None:
     parser.add_argument("--npz", default=None, help="Exported block from the Colab notebook or tesseract.codeblock")
     parser.add_argument("--repo", default=None, help="Hold a git repository's history instead of Iris")
     parser.add_argument("--sculpture", default=None, choices=sorted(SCULPTURES), help="Ambient sculpture of a famous tree")
+    parser.add_argument("--weights", default=None, help="Hold model weights: .safetensors, .pt/.pth/.bin, or 'tesseract'")
     parser.add_argument("--shape", type=int, nargs=4, default=list(VIEW_SHAPE), metavar=("T", "D", "H", "W"))
     args = parser.parse_args()
     shape = tuple(args.shape)
     _server, world = make_server(
-        args.host, args.port, npz=args.npz, shape=shape, repo=args.repo, sculpture=args.sculpture
+        args.host, args.port, npz=args.npz, shape=shape, repo=args.repo, sculpture=args.sculpture, weights=args.weights
     )
     print(
         f"4D Mind {catalog()['version']}  {world.meta['name']} block {tuple(world.volume.shape)}  "

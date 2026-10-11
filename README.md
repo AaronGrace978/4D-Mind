@@ -39,6 +39,18 @@ python -m tesseract.demo --repo .
 python -m tesseract.demo --npz iris_block.npz
 ```
 
+### Model weights in 4D
+
+Any network's weights can be held as a solid: t walks through the tensors from input to output, x is the output unit, y the input unit, and z lifts each weight by how many standard deviations it sits from its tensor's mean. Channels mark positive, negative, magnitude, and 3σ outliers. The **Tensors** panel lists each tensor's shape, mean, std, range, sparsity, and outlier share; click one to cut the solid at its slice.
+
+```bash
+python -m tesseract.demo --weights model.safetensors   # .pt / .pth / .bin need torch
+python -m tesseract.demo --weights tesseract           # this repo's own block net
+python -m tesseract.weightblock model.safetensors --out weights_block.npz --stats
+```
+
+`.safetensors` is read with numpy alone, BF16 included. The exported `.npz` is a regular block with per-tensor stats in its `meta`, so other tools (zeroth-grad, the block net) read it like any other solid.
+
 The **Hold** box swaps the solid without restarting. Paste a local git folder or a `.npz`, type `linux` / `doom` / `git`, or leave it blank for Iris. A GitHub URL is a remote address, so clone it first and hold the folder.
 
 ### The trained voice on a GPU

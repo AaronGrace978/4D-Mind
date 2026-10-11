@@ -102,10 +102,14 @@
       <section>
         <h2>Hold</h2>
         <form id="open-form" class="open">
-          <input id="open-path" type="text" spellcheck="false" placeholder="path to a git repo or .npz, blank for Iris">
+          <input id="open-path" type="text" spellcheck="false" placeholder="git repo, .npz, .safetensors/.pt weights, or tesseract">
           <button type="submit">Hold</button>
         </form>
         <p id="open-status"></p>
+      </section>
+      <section id="weights-section" class="hidden">
+        <h2>Tensors</h2>
+        <ol id="tensor-list"></ol>
       </section>
       <section>
         <h2>Reading</h2>

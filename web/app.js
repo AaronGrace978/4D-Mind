@@ -376,6 +376,7 @@ async function boot() {
   const response = await fetch("/api/block");
   const payload = await response.json();
   state.points = payload.points;
+  state.shape = payload.shape;
   state.risk = [];
   state.marker = null;
   reading.textContent = payload.reading;
@@ -390,6 +391,7 @@ async function boot() {
   document.getElementById("coder-focus").textContent = payload.has_source
     ? "Click a dot to focus a file. The coder reads that file from disk."
     : "This solid has no checkout. Hold a folder before asking the coder.";
+  renderTensors(payload.tensors);
   for (const [channel, label] of Object.entries(payload.labels || {})) {
     const node = document.getElementById(`label-${channel}`);
     if (node) node.textContent = label;
@@ -397,6 +399,30 @@ async function boot() {
   resize();
   await loadSlice();
   if (state.studio === "scan") await loadRisk();
+}
+
+function renderTensors(tensors) {
+  const section = document.getElementById("weights-section");
+  const list = document.getElementById("tensor-list");
+  list.innerHTML = "";
+  section.classList.toggle("hidden", !tensors);
+  const time = Math.max((state.shape?.[0] || 1) - 1, 1);
+  for (const item of tensors || []) {
+    const row = document.createElement("li");
+    row.textContent = `${item.name} [${item.shape.join("×")}]  μ ${item.mean.toFixed(4)}  σ ${item.std.toFixed(4)}  outliers ${(item.outliers * 100).toFixed(2)}%`;
+    row.title = `range ${item.min.toFixed(4)} … ${item.max.toFixed(4)}, ${(item.near_zero * 100).toFixed(1)}% near zero, L2 ${item.l2.toFixed(3)}`;
+    row.addEventListener("click", () => {
+      state.cut = item.t / time;
+      state.sliceValue = state.cut;
+      document.getElementById("cut").value = String(Math.round(state.cut * 1000));
+      cutOut.textContent = state.cut.toFixed(2);
+      state.cutAxis = "t";
+      document.getElementById("cut-axis").value = "t";
+      draw();
+      scheduleSlice();
+    });
+    list.appendChild(row);
+  }
 }
 
 document.getElementById("open-form").addEventListener("submit", async (event) => {
