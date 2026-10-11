@@ -46,10 +46,14 @@ Any network's weights can be held as a solid: t walks through the tensors from i
 ```bash
 python -m tesseract.demo --weights model.safetensors   # .pt / .pth / .bin need torch
 python -m tesseract.demo --weights tesseract           # this repo's own block net
+python -m tesseract.demo --weights path/to/hf-model-folder          # sharded checkpoints
+python -m tesseract.demo --weights tuned.safetensors --base base.safetensors   # what training changed
 python -m tesseract.weightblock model.safetensors --out weights_block.npz --stats
 ```
 
-`.safetensors` is read with numpy alone, BF16 included. The exported `.npz` is a regular block with per-tensor stats in its `meta`, so other tools (zeroth-grad, the block net) read it like any other solid.
+In the **Hold** box, `tuned.safetensors - base.safetensors` holds the difference, and the reading names the tensors that moved most relative to the base. Tensors are grouped by numbered layer (`layers.12.*`), so t is true depth. A PEFT adapter folder is folded into its update B·A, scaled by `lora_alpha / r`.
+
+`.safetensors` is memory-mapped with numpy alone, BF16 included, and only one tensor is widened to float32 at a time: a 0.6B BF16 checkpoint holds in about 9 seconds. Tail stats (outliers, kurtosis, near-zero share) come from an even sample of up to 1M values per tensor; mean, std, range, and L2 are exact. The exported `.npz` is a regular block with per-tensor stats in its `meta`, so other tools (zeroth-grad, the block net) read it like any other solid.
 
 The **Hold** box swaps the solid without restarting. Paste a local git folder or a `.npz`, type `linux` / `doom` / `git`, or leave it blank for Iris. A GitHub URL is a remote address, so clone it first and hold the folder.
 

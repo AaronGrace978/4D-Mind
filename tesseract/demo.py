@@ -388,7 +388,10 @@ def make_server(
     repo: str | None = None,
     sculpture: str | None = None,
     weights: str | None = None,
+    base: str | None = None,
 ):
+    if weights and base:
+        weights = f"{weights} - {base}"
     world = BlockWorld(npz=npz, shape=shape, repo=repo, sculpture=sculpture, weights=weights)
     server = ThreadingHTTPServer((host, port), make_handler(world))
     return server, world
@@ -401,12 +404,13 @@ def main() -> None:
     parser.add_argument("--npz", default=None, help="Exported block from the Colab notebook or tesseract.codeblock")
     parser.add_argument("--repo", default=None, help="Hold a git repository's history instead of Iris")
     parser.add_argument("--sculpture", default=None, choices=sorted(SCULPTURES), help="Ambient sculpture of a famous tree")
-    parser.add_argument("--weights", default=None, help="Hold model weights: .safetensors, .pt/.pth/.bin, or 'tesseract'")
+    parser.add_argument("--weights", default=None, help="Hold model weights: .safetensors, .pt/.pth/.bin, a sharded folder, or 'tesseract'")
+    parser.add_argument("--base", default=None, help="With --weights, show what changed since this checkpoint")
     parser.add_argument("--shape", type=int, nargs=4, default=list(VIEW_SHAPE), metavar=("T", "D", "H", "W"))
     args = parser.parse_args()
     shape = tuple(args.shape)
     _server, world = make_server(
-        args.host, args.port, npz=args.npz, shape=shape, repo=args.repo, sculpture=args.sculpture, weights=args.weights
+        args.host, args.port, npz=args.npz, shape=shape, repo=args.repo, sculpture=args.sculpture, weights=args.weights, base=args.base
     )
     print(
         f"4D Mind {catalog()['version']}  {world.meta['name']} block {tuple(world.volume.shape)}  "

@@ -409,8 +409,9 @@ function renderTensors(tensors) {
   const time = Math.max((state.shape?.[0] || 1) - 1, 1);
   for (const item of tensors || []) {
     const row = document.createElement("li");
-    row.textContent = `${item.name} [${item.shape.join("×")}]  μ ${item.mean.toFixed(4)}  σ ${item.std.toFixed(4)}  outliers ${(item.outliers * 100).toFixed(2)}%`;
-    row.title = `range ${item.min.toFixed(4)} … ${item.max.toFixed(4)}, ${(item.near_zero * 100).toFixed(1)}% near zero, L2 ${item.l2.toFixed(3)}`;
+    const moved = item.rel_change === undefined ? "" : `  Δ ${(item.rel_change * 100).toFixed(2)}%`;
+    row.textContent = `${item.name} [${item.shape.join("×")}]  μ ${item.mean.toFixed(4)}  σ ${item.std.toFixed(4)}  outliers ${(item.outliers * 100).toFixed(2)}%${moved}`;
+    row.title = `range ${item.min.toFixed(4)} … ${item.max.toFixed(4)}, ${(item.near_zero * 100).toFixed(1)}% near zero, kurtosis ${item.kurtosis.toFixed(2)}, L2 ${item.l2.toFixed(3)}`;
     row.addEventListener("click", () => {
       state.cut = item.t / time;
       state.sliceValue = state.cut;
