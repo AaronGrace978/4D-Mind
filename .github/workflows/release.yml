@@ -1,0 +1,86 @@
+name: Release 4D Mind (All Platforms)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (e.g. v1.2.0)"
+        required: false
+        default: "v1.2.0"
+
+permissions:
+  contents: write
+
+jobs:
+  python-package:
+    name: Build Python Wheel & sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build pytest numpy
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  tauri-desktop:
+    name: Build Tauri Desktop (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            args: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux WebKitGTK dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./desktop/src-tauri -> target"
+
+      - name: Install desktop dependencies
+        working-directory: ./desktop
+        run: npm ci
+
+      - name: Publish Release Bundles via Tauri Action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ./desktop
+          tagName: ${{ github.ref_name == 'main' && inputs.tag || github.ref_name }}
+          releaseName: "4D Mind ${{ github.ref_name == 'main' && inputs.tag || github.ref_name }}"
+          releaseBody: |
+            ## 4D Mind — Cross-Platform Release
+            Includes the 4D Eternalist Transformer, 4D Spatiotemporal Code Lens (`grounded:4d-lens`, `lora:4d-coder`, local DeepSeek / Ollama), Local Workspace Harness, and Tauri 2 Desktop App for Windows, macOS, and Linux.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

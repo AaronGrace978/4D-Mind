@@ -194,9 +194,28 @@ python -m tesseract.codeblock path/to/repo --shape 32 64 64 64 --out repo_a100.n
 
 Clicking a point names the commit, the file, the approximate line, and what is there. The `.npz` has the same layout as `iris_block.npz`, so `tesseract.life.load_npz` and the eval functions read it.
 
-## Desktop app (Tauri 2.12)
+## Desktop app (Tauri 2.12), Rust IPC & Cross-Platform Releases
 
-`desktop/` wraps the platform in a native window. The app starts `python -m tesseract.demo` on a free local port, shows the studios once they answer, and stops the server when the window closes.
+`desktop/` wraps the platform in a native window with **Deep Rust Tauri IPC** (`native_read_file`, `native_run_harness`, `native_patch_and_verify` in `desktop/src-tauri/src/main.rs`) and bundles `tesseract/`, `web/`, and `lives/` directly into the installers.
+
+### One-line Local Install (CLI + Optional Native Desktop Bundle)
+
+```bash
+# Linux / macOS
+./scripts/install.sh
+
+# Windows PowerShell (RTX 5060 Ti ready)
+.\scripts\install.ps1
+```
+
+Or install the Python CLI entrypoints (`4d-mind`, `4d-mind-risk`, `4d-mind-codeblock`, `4d-mind-train`) directly via `pip`:
+
+```bash
+python -m pip install -e .
+4d-mind --repo . --port 18765
+```
+
+### Building Native Installers (Windows `.msi`/`.exe`, macOS `.dmg`/`.app`, Linux `.deb`/`.AppImage`)
 
 Needs Rust, Node 18+, Python with `numpy`, and on Linux the WebKitGTK headers (`libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev`; see [Tauri's prerequisites](https://v2.tauri.app/start/prerequisites/)).
 
@@ -207,6 +226,8 @@ npm run dev                                   # Iris
 FOURD_MIND_REPO=/path/to/repo npm run dev     # a repository's history
 npm run build                                 # installers in src-tauri/target/release/bundle/
 ```
+
+ Pushing a `v*` tag (e.g. `git tag v1.2.0 && git push origin v1.2.0`) or running the **Release 4D Mind (All Platforms)** GitHub Actions workflow (`.github/workflows/release.yml`) automatically builds and publishes Windows, macOS (Universal), Linux, and Python wheel artifacts to GitHub Releases.
 
 `FOURD_MIND_NPZ` opens an exported block, `FOURD_MIND_PYTHON` picks the interpreter, and `FOURD_MIND_ROOT` points a built app at this checkout if it was moved. A built binary also forwards its arguments, so `4d-mind --repo .` and `4d-mind --sculpture doom` work.
 

@@ -64,9 +64,19 @@
         <div id="prompts" class="prompts"></div>
       </section>
       <section id="panel-coder" class="studio-panel hidden">
-        <h2>Coder</h2>
+        <h2>Coder · 4D Lens, Ablation &amp; Self-Validating Harness</h2>
         <p class="blurb">The cloud is the shape of the code. Reads the 4D spatiotemporal lens + files and answers locally (4D-Lens / DeepSeek / Ollama) or on Ollama Cloud.</p>
         <p id="coder-focus">Click a dot to focus a file.</p>
+        <pre id="coder-lens" class="lens-box">Open a repository or sculpture to compute the 4D Spatiotemporal Code Lens.</pre>
+        <details id="ablation-details" class="harness-panel">
+          <summary>4D Ablation Lens (Eternalist Full Block vs Causal Witness)</summary>
+          <label>
+            Causal witness horizon (t)
+            <output id="ablation-t-readout">0.50</output>
+            <input id="ablation-t" type="range" min="100" max="900" value="500">
+          </label>
+          <pre id="ablation-box" class="lens-box">Move the horizon slider to compare Eternalist 4D foresight vs Causal 3D witness.</pre>
+        </details>
         <form id="key-form" class="open">
           <input id="ollama-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional Ollama Cloud API key (local models need none)">
           <button type="submit">Save key</button>
@@ -83,7 +93,34 @@
         </form>
         <div class="prompts">
           <button type="button" id="coder-hot">Fix the hottest spot</button>
+          <button type="button" id="coder-cochurn">Audit 4D co-churn coupling</button>
+          <button type="button" id="coder-fracture">Inspect fracture slices</button>
         </div>
+        <details id="harness-details" class="harness-panel" open>
+          <summary>Self-Validating 4D CI/CD &amp; Native File Harness</summary>
+          <div class="prompts harness-actions">
+            <button type="button" data-harness="pytest">Run pytest</button>
+            <button type="button" data-harness="git_status">git status</button>
+            <button type="button" data-harness="git_diff">git diff</button>
+            <button type="button" data-harness="cargo_check">cargo check</button>
+            <button type="button" id="load-focused-file">Load focused file</button>
+          </div>
+          <form id="patch-form" class="patch-form">
+            <input id="patch-file" type="text" spellcheck="false" placeholder="Relative file path (e.g. src/app.py)">
+            <textarea id="patch-find" rows="2" spellcheck="false" placeholder="Exact snippet to find"></textarea>
+            <textarea id="patch-replace" rows="2" spellcheck="false" placeholder="Replacement snippet"></textarea>
+            <label class="check">
+              <input id="patch-autoverify" type="checkbox" checked>
+              Auto-trigger local test suite &amp; verify 4D topology
+            </label>
+            <label class="check">
+              <input id="patch-rollback" type="checkbox" checked>
+              Auto-rollback if tests fail
+            </label>
+            <button type="submit">Apply Refactor, Verify Tests &amp; Re-rasterize 4D Solid</button>
+          </form>
+          <pre id="harness-output" class="lens-box">Harness idle.</pre>
+        </details>
       </section>
       <section id="panel-smear" class="studio-panel hidden">
         <h2>4D smear</h2>

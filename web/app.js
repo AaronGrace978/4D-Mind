@@ -14,9 +14,25 @@ const state = {
   studio: "sculpt",
   stand: 0.5,
   smear: 0.16,
+  ablationT: 0.5,
   ambient: true,
   theme: null,
+  drawQueued: false,
+  bufSx: null,
+  bufSy: null,
+  bufDepth: null,
+  bufPersp: null,
+  bufIndex: null,
 };
+
+function requestDraw() {
+  if (state.drawQueued) return;
+  state.drawQueued = true;
+  window.requestAnimationFrame(() => {
+    state.drawQueued = false;
+    draw();
+  });
+}
 
 const stage = document.getElementById("stage");
 const ctx = stage.getContext("2d");
@@ -108,19 +124,70 @@ function draw() {
   ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = state.theme?.bg || "#0b0e14";
   ctx.fillRect(0, 0, width, height);
-  const points = visiblePoints();
-  const projected = points.map((item) => ({ ...item, view: project(item.point) }));
-  projected.sort((a, b) => a.view.depth - b.view.depth);
+  const points = state.points;
+  const nTotal = points.length;
+  if (!state.bufSx || state.bufSx.length < nTotal) {
+    state.bufSx = new Float32Array(Math.max(nTotal, 1));
+    state.bufSy = new Float32Array(Math.max(nTotal, 1));
+    state.bufDepth = new Float32Array(Math.max(nTotal, 1));
+    state.bufPersp = new Float32Array(Math.max(nTotal, 1));
+    state.bufIndex = new Int32Array(Math.max(nTotal, 1));
+  }
+  const c = Math.cos(state.xt);
+  const s = Math.sin(state.xt);
+  const yaw = Math.cos(state.yaw);
+  const sy = Math.sin(state.yaw);
+  const cp = Math.cos(state.pitch);
+  const sp = Math.sin(state.pitch);
+  const thickness = 0.07;
+  const cut = state.cut;
+  const isSlab = state.slab;
+  const axisIdx = state.cutAxis === "x" ? 0 : state.cutAxis === "y" ? 1 : state.cutAxis === "z" ? 2 : 3;
+
+  let count = 0;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
-  for (const item of projected) {
-    minX = Math.min(minX, item.view.sx);
-    maxX = Math.max(maxX, item.view.sx);
-    minY = Math.min(minY, item.view.sy);
-    maxY = Math.max(maxY, item.view.sy);
+  const bufSx = state.bufSx;
+  const bufSy = state.bufSy;
+  const bufDepth = state.bufDepth;
+  const bufPersp = state.bufPersp;
+  const bufIndex = state.bufIndex;
+
+  for (let i = 0; i < nTotal; i += 1) {
+    const pt = points[i];
+    const val = pt[axisIdx];
+    if (isSlab ? Math.abs(val - cut) > thickness : val > cut + 1e-6) continue;
+    const x = pt[0] - 0.5;
+    const y = pt[1] - 0.5;
+    const z = pt[2] - 0.5;
+    const t = pt[3] - 0.5;
+    const xr = x * c - t * s;
+    const tr = x * s + t * c;
+    const vz0 = z * 0.85 + xr * 0.45;
+    const vx2 = tr * yaw - vz0 * sy;
+    const vz1 = tr * sy + vz0 * yaw;
+    const vy2 = y * cp - vz1 * sp;
+    const vz2 = y * sp + vz1 * cp;
+    const persp = 3.1 / (3.1 + vz2);
+    const sx = vx2 * persp;
+    const syScreen = -vy2 * persp;
+    bufSx[count] = sx;
+    bufSy[count] = syScreen;
+    bufDepth[count] = vz2;
+    bufPersp[count] = persp;
+    bufIndex[count] = i;
+    if (sx < minX) minX = sx;
+    if (sx > maxX) maxX = sx;
+    if (syScreen < minY) minY = syScreen;
+    if (syScreen > maxY) maxY = syScreen;
+    count += 1;
   }
+
+  const order = Array.from({ length: count }, (_, k) => k);
+  order.sort((a, b) => bufDepth[a] - bufDepth[b]);
+
   const span = Math.max(maxX - minX, maxY - minY, 0.08);
   const scale = (Math.min(width, height) * 0.62) / span;
   const midX = (minX + maxX) / 2;
@@ -129,15 +196,19 @@ function draw() {
   const cy = height * 0.46;
   const dpr = window.devicePixelRatio || 1;
   const radius = Math.min(Math.max(2.2 * dpr, scale * 0.01), 11 * dpr);
-  for (const item of projected) {
-    const x = cx + (item.view.sx - midX) * scale;
-    const y = cy + (item.view.sy - midY) * scale;
-    ctx.fillStyle = colorOf(item.point, item.index);
+  const projected = new Array(count);
+
+  for (let k = 0; k < count; k += 1) {
+    const slot = order[k];
+    const idx = bufIndex[slot];
+    const pt = points[idx];
+    const x = cx + (bufSx[slot] - midX) * scale;
+    const y = cy + (bufSy[slot] - midY) * scale;
+    ctx.fillStyle = colorOf(pt, idx);
     ctx.beginPath();
-    ctx.arc(x, y, radius * item.view.persp, 0, Math.PI * 2);
+    ctx.arc(x, y, radius * bufPersp[slot], 0, Math.PI * 2);
     ctx.fill();
-    item.screenX = x;
-    item.screenY = y;
+    projected[k] = { point: pt, index: idx, screenX: x, screenY: y };
   }
   if (state.marker) {
     ctx.strokeStyle = "#f4f7fb";
@@ -147,7 +218,7 @@ function draw() {
     ctx.stroke();
   }
   state.projected = projected;
-  countOut.textContent = `showing ${points.length} of ${state.points.length} points`;
+  countOut.textContent = `showing ${count} of ${nTotal} points`;
 }
 
 function canvasPoint(event) {
@@ -174,6 +245,9 @@ async function probe(point, screen) {
     state.focusFile = payload.file;
     const focus = document.getElementById("coder-focus");
     if (focus) focus.textContent = `Focused file: ${payload.file}`;
+    const patchFile = document.getElementById("patch-file");
+    if (patchFile && !patchFile.value) patchFile.value = payload.file;
+    if (state.studio === "coder") loadLens();
   }
   draw();
 }
@@ -189,7 +263,7 @@ window.addEventListener("pointermove", (event) => {
   if (Math.hypot(dx, dy) > 3) state.drag.moved = true;
   state.yaw = state.drag.yaw + dx * 0.008;
   state.pitch = Math.max(-1.2, Math.min(1.2, state.drag.pitch + dy * 0.008));
-  draw();
+  requestDraw();
 });
 
 window.addEventListener("pointerup", async (event) => {
@@ -287,7 +361,10 @@ function showStudio(id) {
     panel.classList.toggle("hidden", panel.id !== `panel-${id}`);
   }
   if (id === "scan") loadRisk();
-  if (id === "coder") loadModels();
+  if (id === "coder") {
+    loadModels();
+    loadLens();
+  }
 }
 
 document.getElementById("studios").addEventListener("click", (event) => {
@@ -399,6 +476,7 @@ async function boot() {
   resize();
   await loadSlice();
   if (state.studio === "scan") await loadRisk();
+  if (state.studio === "coder") await loadLens();
 }
 
 function renderTensors(tensors) {
@@ -484,6 +562,66 @@ async function loadModels() {
     : "Local 4D-Lens & local Ollama models work for free. Paste an Ollama Cloud key only if you want cloud models.";
 }
 
+async function loadLens() {
+  const lensNode = document.getElementById("coder-lens");
+  const ablationNode = document.getElementById("ablation-box");
+  if (!lensNode) return;
+  try {
+    const query = new URLSearchParams({
+      file: state.focusFile || "",
+      cut_t: String(state.ablationT || 0.5),
+    });
+    const response = await fetch(`/api/lens?${query}`);
+    const payload = await response.json();
+    lensNode.textContent = payload.summary || "No 4D lens summary available.";
+    if (ablationNode && payload.ablation?.summary) {
+      ablationNode.textContent = payload.ablation.summary;
+    }
+  } catch (error) {
+    lensNode.textContent = String(error.message || error);
+  }
+}
+
+function tauriInvoke(cmd, args) {
+  const invoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
+  return typeof invoke === "function" ? invoke(cmd, args) : null;
+}
+
+async function runHarnessAction(body) {
+  const out = document.getElementById("harness-output");
+  if (out) out.textContent = `Running ${body.action}…`;
+  try {
+    let payload = null;
+    if (body.action === "read" && body.file) {
+      const ipc = tauriInvoke("native_read_file", { file: body.file });
+      if (ipc) payload = await ipc;
+    }
+    if (!payload) {
+      const response = await fetch("/api/coder/harness", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || response.statusText);
+    }
+    const header = payload.command ? `$ ${payload.command} (exit ${payload.returncode})\n` : "";
+    if (out) out.textContent = `${header}${payload.output}`;
+    if (body.action === "read" && payload.content !== undefined) {
+      const snippet = payload.content.split("\n").slice(0, 30).join("\n");
+      const findBox = document.getElementById("patch-find");
+      const replaceBox = document.getElementById("patch-replace");
+      if (findBox && !findBox.value) findBox.value = snippet;
+      if (replaceBox && !replaceBox.value) replaceBox.value = snippet;
+    }
+    if (body.action === "patch" && payload.patched !== false && payload.ok !== undefined) {
+      await boot();
+    }
+  } catch (error) {
+    if (out) out.textContent = `Error: ${String(error.message || error)}`;
+  }
+}
+
 async function askCoder(question) {
   const query = question.trim();
   if (!query) return;
@@ -499,6 +637,10 @@ async function askCoder(question) {
   });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || response.statusText);
+  if (payload.lens?.summary) {
+    const lensNode = document.getElementById("coder-lens");
+    if (lensNode) lensNode.textContent = payload.lens.summary;
+  }
   const files = (payload.files || []).join(", ");
   addCoderLine("them", files ? `${payload.text}\n\nRead: ${files}` : payload.text);
 }
@@ -533,6 +675,54 @@ document.getElementById("coder-form").addEventListener("submit", async (event) =
 document.getElementById("coder-hot").addEventListener("click", () => {
   askCoder("What is the most likely bug in the focused file or the hottest spot, and what is the fix?").catch((error) => {
     addCoderLine("them", String(error.message || error));
+  });
+});
+
+document.getElementById("coder-cochurn")?.addEventListener("click", () => {
+  askCoder("Which files co-mutate along the commit axis t, and how should we decouple their worldlines?").catch((error) => {
+    addCoderLine("them", String(error.message || error));
+  });
+});
+
+document.getElementById("coder-fracture")?.addEventListener("click", () => {
+  askCoder("Inspect the temporal fracture slices where churn and fix-scars spike together. What architectural change prevents future fractures?").catch((error) => {
+    addCoderLine("them", String(error.message || error));
+  });
+});
+
+document.querySelector(".harness-actions")?.addEventListener("click", (event) => {
+  const btn = event.target.closest("button[data-harness]");
+  if (btn) runHarnessAction({ action: btn.dataset.harness });
+});
+
+document.getElementById("load-focused-file")?.addEventListener("click", async () => {
+  const fileInput = document.getElementById("patch-file");
+  const target = (fileInput?.value || state.focusFile || "").trim();
+  if (!target) {
+    const out = document.getElementById("harness-output");
+    if (out) out.textContent = "Click a dot on the 4D solid or enter a relative file path first.";
+    return;
+  }
+  if (fileInput) fileInput.value = target;
+  await runHarnessAction({ action: "read", file: target });
+});
+
+document.getElementById("ablation-t")?.addEventListener("input", (event) => {
+  state.ablationT = Number(event.target.value) / 1000;
+  const out = document.getElementById("ablation-t-readout");
+  if (out) out.textContent = state.ablationT.toFixed(2);
+  loadLens();
+});
+
+document.getElementById("patch-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await runHarnessAction({
+    action: "patch",
+    file: document.getElementById("patch-file").value,
+    find_text: document.getElementById("patch-find").value,
+    replace_text: document.getElementById("patch-replace").value,
+    auto_verify: Boolean(document.getElementById("patch-autoverify")?.checked ?? true),
+    rollback_on_fail: Boolean(document.getElementById("patch-rollback")?.checked ?? false),
   });
 });
 
