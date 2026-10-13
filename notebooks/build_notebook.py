@@ -344,24 +344,32 @@ from tesseract.coder import fourd_code_lens, grounded_code_review
 from tesseract.eval import evaluate_risk
 from tesseract.gradio_app import render_projection, render_risk_map
 from tesseract.risk import geometric_risk, hotspot_table, train_risk
-from tesseract.train import load_checkpoint
+from tesseract.train import load_checkpoint, save_checkpoint
 
 REPO_TO_SCAN = Path(TARGET)
-code_vol, code_inv, code_meta = rasterize_repo(REPO_TO_SCAN, cfg.shape)
+try:
+    code_vol, code_inv, code_meta = rasterize_repo(REPO_TO_SCAN, cfg.shape)
+except Exception as exc:
+    print("Could not rasterize", REPO_TO_SCAN, "-", exc, "- holding the Doom sculpture instead.")
+    REPO_TO_SCAN = None
+    code_vol, code_inv, code_meta = ambient_sculpture("doom", cfg.shape, seed=cfg.seed)
 sculptures = [ambient_sculpture(sid, cfg.shape, seed=cfg.seed + idx)[0] for idx, sid in enumerate(("linux", "doom", "git", "cpython"))]
+print(f"{code_meta['name']}: {code_meta.get('n_commits', '?')} commits held as a {code_vol.shape} solid")
 
 if not done("risk_head.pt"):
-    risk_model, _, _ = load_checkpoint(OUT / "iris_resident.pt", device)
-    train_risk(
-        risk_model,
+    risk_steps = max(40, runtime["steps"]["finetune"] // 2)
+    risk_model, _history = train_risk(
+        cfg,
         [code_vol] + sculptures,
-        steps=max(40, runtime["steps"]["finetune"] // 2),
-        lr=2e-3,
+        steps=risk_steps,
         device=device,
-        out_path=OUT / "risk_head.pt",
+        lr=cfg.finetune_lr,
+        batch_size=runtime["batch"],
         seed=cfg.seed,
+        init=str(OUT / "iris_resident.pt"),
         log_every=20,
     )
+    save_checkpoint(OUT / "risk_head.pt", risk_model, risk_steps, "risk")
     del risk_model
     torch.cuda.empty_cache()
 

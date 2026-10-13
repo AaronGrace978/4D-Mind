@@ -158,7 +158,7 @@ def a100_runtime(vram_gb: float, ram_gb: float, run: str, family: str = "qwen") 
     family = family.strip().lower()
     if vram_gb >= 70:
         language_model = (
-            "deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct"
+            "deepseek-ai/deepseek-coder-6.7b-instruct"
             if family == "deepseek"
             else ("Qwen/Qwen2.5-Coder-7B-Instruct" if family == "qwen-coder" else "Qwen/Qwen2.5-7B-Instruct")
         )
