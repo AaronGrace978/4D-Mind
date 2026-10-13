@@ -31,6 +31,13 @@ jobs:
         with:
           name: python-dist
           path: dist/*
+      - name: Attach Python wheel and sdist to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag || 'v1.2.0' }}
+          name: "4D Mind ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag || 'v1.2.0' }}"
+          files: dist/*
 
   tauri-desktop:
     name: Build Tauri Desktop (${{ matrix.platform }})
@@ -76,11 +83,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           projectPath: ./desktop
-          tagName: ${{ github.ref_name == 'main' && inputs.tag || github.ref_name }}
-          releaseName: "4D Mind ${{ github.ref_name == 'main' && inputs.tag || github.ref_name }}"
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag || 'v1.2.0' }}
+          releaseName: "4D Mind ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag || 'v1.2.0' }}"
           releaseBody: |
-            ## 4D Mind — Cross-Platform Release
-            Includes the 4D Eternalist Transformer, 4D Spatiotemporal Code Lens (`grounded:4d-lens`, `lora:4d-coder`, local DeepSeek / Ollama), Local Workspace Harness, and Tauri 2 Desktop App for Windows, macOS, and Linux.
+            ## 4D Mind v1.2.0 — Cross-Platform Release
+            - **4D Spatiotemporal Code Lens & Ablation Lens** (`fourd_code_lens`, `ablation_lens` in `tesseract/coder.py`): Analyzes any Git repository as a 4D solid `(t=commit, z=indentation, y=line, x=file)` and compares Eternalist full-block foresight against a Causal 3D witness.
+            - **Self-Validating 4D CI/CD & Native File Harness**: Apply refactors directly from the Coder studio, automatically trigger local test suites (`pytest`, `cargo check`, `npm test`), auto-rollback on test failure, and measure before/after 4D topological health deltas.
+            - **Zero-Cost Local Coding**: Run `grounded:4d-lens`, `lora:4d-coder` (`FOURD_MIND_LORA`), or local Ollama models (`local:deepseek-coder-v2:16b`, `local:deepseek-r1:14b`, `local:qwen2.5-coder:7b`) with zero API keys, plus `rtx16gb` preset support for 16 GB GPUs (RTX 5060 Ti / Colab T4).
+            - **Deep Rust Tauri IPC & Zero-Lag Orbiting**: Native Rust IPC commands (`native_read_file`, `native_run_harness`, `native_patch_and_verify`) and typed-array `requestAnimationFrame` 4D viewport projection.
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
