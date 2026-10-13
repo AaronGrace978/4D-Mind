@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from tesseract.character import Resident, voice_from_env
 from tesseract.codeblock import SCULPTURES, file_at, hold_sculpture, repo_probe_sentence, rasterize_repo
 from tesseract.coder import CoderError, ask as ask_coder
-from tesseract.ollama_cloud import api_key, default_model, fallback_models, list_models
+from tesseract.ollama_cloud import api_key, default_model, fallback_models, list_local_models, list_models
 from tesseract.life import SMEAR_KINDS, load_iris, load_npz, media_probe_sentence, rasterize, rasterize_smear
 from tesseract.platform import catalog
 from tesseract.viewdata import probe_channels, sample_field_at_points, sample_points, slice_image
@@ -190,16 +190,34 @@ class BlockWorld:
         return reply
 
     def models_payload(self) -> dict:
+        local_models: list[dict] = [{"name": "grounded:4d-lens", "coder": True}]
+        if self.resident.backend == "lora":
+            local_models.insert(0, {"name": "lora:4d-coder", "coder": True})
         try:
-            models = list_models()
+            local_models.extend(list_local_models())
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+        try:
+            cloud_models = list_models()
             error = ""
         except (OSError, ValueError, json.JSONDecodeError) as exc:
-            models = fallback_models()
+            cloud_models = fallback_models()
             error = str(exc)
+        models = local_models + cloud_models
+        has_local_daemon = any(row["name"].startswith("local:") for row in local_models)
+        if self.resident.backend == "lora":
+            preferred = "lora:4d-coder"
+        elif has_local_daemon:
+            preferred = next((row["name"] for row in local_models if row["name"].startswith("local:")), "grounded:4d-lens")
+        elif self.ollama_key:
+            preferred = default_model(cloud_models) or "grounded:4d-lens"
+        else:
+            preferred = "grounded:4d-lens"
         return {
             "models": models,
-            "default": default_model(models),
+            "default": preferred,
             "key_set": bool(self.ollama_key),
+            "local_available": True,
             "error": error,
         }
 
@@ -213,6 +231,7 @@ class BlockWorld:
             volume = self.volume
             key = self.ollama_key
             risk_model = self.model
+            voice = self.resident.voice
         hotspots: list[dict] = []
         if source is not None and meta.get("kind") == "repo":
             from tesseract.risk import report
@@ -220,8 +239,18 @@ class BlockWorld:
             raw = report(volume, meta, risk_model)
             raw.pop("risk", None)
             hotspots = raw.get("hotspots") or []
-        chosen = model.strip() or (self.models_payload().get("default") or "")
-        reply = ask_coder(meta, source, query, chosen, key, hotspots=hotspots, focus=focus)
+        chosen = model.strip() or (self.models_payload().get("default") or "grounded:4d-lens")
+        reply = ask_coder(
+            meta,
+            source,
+            query,
+            chosen,
+            key,
+            hotspots=hotspots,
+            focus=focus,
+            volume=volume,
+            voice=voice,
+        )
         self.coder_chat.append({"role": "user", "content": query})
         self.coder_chat.append({"role": "assistant", "content": reply["text"]})
         self.coder_chat = self.coder_chat[-12:]

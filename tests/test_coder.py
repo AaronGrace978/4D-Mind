@@ -87,3 +87,58 @@ def test_path_escape_uses_the_resolved_root(tmp_path: Path):
     root = tmp_path / "repo"
     root.mkdir()
     assert excerpt(root, "src/../../etc/passwd") is None
+
+
+def test_fourd_code_lens_and_grounded_coder_need_no_api_key(tmp_path: Path):
+    from tesseract.codeblock import ambient_sculpture
+    from tesseract.coder import fourd_code_lens
+    from tesseract.risk import geometric_risk, hotspot_table
+
+    volume, _inv, meta = ambient_sculpture("doom", (8, 8, 16, 16), seed=3)
+    field = geometric_risk(volume)
+    hotspots = hotspot_table(volume, meta, field)
+    lens = fourd_code_lens(volume, meta, hotspots=hotspots)
+    assert lens["n_commits"] >= 8
+    assert len(lens["worldlines"]) > 0
+    assert "4D Spatiotemporal Code Lens" in lens["summary"]
+
+    # Grounded 4D coder works on a sculpture or a repo without an API key
+    reply = ask(
+        meta,
+        None,
+        "Which worldlines have the highest fix-scar density?",
+        "grounded:4d-lens",
+        None,
+        hotspots=hotspots,
+        volume=volume,
+    )
+    assert reply["model"] == "grounded:4d-lens"
+    assert "4D Spatiotemporal Code Audit" in reply["reply"]
+    assert "lens" in reply
+
+    # Local Ollama model prefix routes without requiring a cloud API key
+    local_seen = {}
+
+    def fake_local_chat(model, messages, key):
+        local_seen["model"] = model
+        local_seen["key"] = key
+        local_seen["user"] = messages[-1]["content"]
+        return "Decouple co-mutating modules along t."
+
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "engine.py").write_text("def step(dt):\n    return dt\n", encoding="utf-8")
+    repo_meta = {"kind": "repo", "name": "engine", "reading": "engine solid.", "files": ["engine.py"], "bands": [[0, 16]]}
+    local_reply = ask(
+        repo_meta,
+        root,
+        "Refactor co-churn.",
+        "local:deepseek-coder-v2:16b",
+        None,
+        hotspots=[{"file": "engine.py", "lines": [1, 2], "risk": 0.72}],
+        volume=volume,
+        chat=fake_local_chat,
+    )
+    assert local_seen["model"] == "local:deepseek-coder-v2:16b"
+    assert "4D Spatiotemporal Code Lens" in local_seen["user"]
+    assert "Decouple" in local_reply["reply"]

@@ -65,15 +65,15 @@
       </section>
       <section id="panel-coder" class="studio-panel hidden">
         <h2>Coder</h2>
-        <p class="blurb">The cloud is the shape of the code. This reads the files those dots stand for and asks Ollama Cloud for a fix.</p>
+        <p class="blurb">The cloud is the shape of the code. Reads the 4D spatiotemporal lens + files and answers locally (4D-Lens / DeepSeek / Ollama) or on Ollama Cloud.</p>
         <p id="coder-focus">Click a dot to focus a file.</p>
         <form id="key-form" class="open">
-          <input id="ollama-key" type="password" autocomplete="off" spellcheck="false" placeholder="Ollama Cloud API key, this session only">
+          <input id="ollama-key" type="password" autocomplete="off" spellcheck="false" placeholder="Optional Ollama Cloud API key (local models need none)">
           <button type="submit">Save key</button>
         </form>
         <p id="key-status"></p>
         <label>
-          Cloud model
+          Coder model
           <select id="coder-model"></select>
         </label>
         <div id="coder-chat" class="chat"></div>

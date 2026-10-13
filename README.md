@@ -11,10 +11,10 @@ The desktop shell is **Tauri 2.12**. Five studios share one solid:
 | **Sculpt** | Ambient 3D code sculptures — Linux, Doom, Git, CPython, Redis, SQLite | `tesseract/codeblock.py`, `tesseract/sculpture.py` |
 | **Scan** | Geometric code vulnerability predictor — where the next fix is likely to land | `tesseract/model.py`, `tesseract/eval.py`, `tesseract/risk.py` |
 | **Resident** | A character who experiences past and future at once | `tesseract/lora_voice.py`, `tesseract/character.py`, `tesseract/voice_text.py` |
-| **Coder** | Ollama Cloud models that read the files behind the dots and propose a fix | `tesseract/coder.py`, `tesseract/ollama_cloud.py` |
+| **Coder** | 4D Spatiotemporal Code Lens (`grounded:4d-lens`), 4D Soft-Prompt LoRA (`lora:4d-coder`), local DeepSeek / Ollama (`local:*`), or Ollama Cloud | `tesseract/coder.py`, `tesseract/ollama_cloud.py` |
 | **Smear** | Video and audio 4D smearing | `tesseract/life.py` |
 
-The heavy training run is a notebook for a Colab Pro A100. This repo is that model, the five studios, and the Tauri 2 platform around them.
+The training pipeline runs in a Colab notebook (supporting both **Colab Pro A100** and free **Colab T4**) or locally on a **16 GB GPU (such as an RTX 5060 Ti 16 GB)** via the `rtx16gb` preset. This repo is that model, the five studios, and the Tauri 2 platform around them.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/AaronGrace978/4D-Mind/blob/main/notebooks/4d_mind_a100.ipynb)
 
@@ -79,11 +79,31 @@ On bash, the same three names are `HF_HUB_DISABLE_XET`, `FOURD_MIND_RESIDENT_CKP
 
 `HF_HUB_DISABLE_XET=1` avoids a stalled Hugging Face download of the Qwen base weights. The key never belongs in the repo.
 
-### Coder
+### Coder (4D Spatiotemporal Code Lens — Local, Free, or Cloud)
 
-**Coder** reads the source the dots stand for (the text stays on disk) and asks [Ollama Cloud](https://ollama.com). Create a key under Settings → API keys, paste it into the Coder panel, and pick a model. The default is the first catalog name that contains `code`. The key stays in this process (`OLLAMA_API_KEY` or the panel). It is not written to disk.
+**Coder** treats the repository as a 4D solid `(t=commit, z=indentation, y=line, x=file)` and computes a **4D Spatiotemporal Code Lens** (`fourd_code_lens` in `tesseract/coder.py`):
+- **File worldlines**: birth slice `t`, peak churn slice `t`, mean churn, fix-scar filament density, multi-author density, and indentation depth (`z`).
+- **4D Co-Churn Coupling**: files whose worldlines repeatedly mutate in the same commit slices `t` (Jaccard co-churn across the time axis).
+- **Temporal Fracture Slices**: commit slices where churn and fix-scars spike together across the solid.
 
-The coder proposes a bugfix. It does not write exploits, payloads, or attack steps.
+Four backends share the 4D lens (the first three require **no API key and $0 cloud cost**):
+1. **`grounded:4d-lens`** — Deterministic 4D Spatiotemporal Code Audit & Refactoring Guide (works offline on CPU/GPU immediately).
+2. **`lora:4d-coder`** — Uses your trained 4D Block Soft-Prompt LoRA (`FOURD_MIND_LORA` + `FOURD_MIND_RESIDENT_CKPT`) so the language model reads the 4D repository latent directly through its 8 soft-prompt tokens.
+3. **`local:<model>`** — Any model running on a local [Ollama](https://ollama.com) daemon (`http://127.0.0.1:11434` or `FOURD_MIND_LOCAL_OLLAMA_URL`), e.g. `ollama pull deepseek-coder-v2:16b`, `ollama pull deepseek-r1:14b`, or `ollama pull qwen2.5-coder:7b` on an RTX 5060 Ti 16 GB.
+4. **Ollama Cloud** — Optional cloud models when `OLLAMA_API_KEY` (or the key box in the UI) is provided.
+
+The coder proposes a bugfix or refactoring. It does not write exploits, payloads, or attack steps.
+
+### Training locally on an RTX 5060 Ti (16 GB)
+
+You can run the entire 4D training and DeepSeek/Qwen LoRA pipeline locally on a 16 GB card without paying for cloud GPUs:
+
+```bash
+python -m tesseract.train --config rtx16gb --steps 600 --out checkpoints/eternalist.pt
+python -m tesseract.finetune --ckpt checkpoints/eternalist.pt --out checkpoints/iris_resident.pt --steps 200
+python -m tesseract.risk train . --ckpt checkpoints/iris_resident.pt --out checkpoints/risk.pt
+python -m tesseract.lora_voice --ckpt checkpoints/iris_resident.pt --out checkpoints/qwen_block_lora --model deepseek-ai/deepseek-coder-1.3b-instruct --steps 160
+```
 
 ## Studios
 

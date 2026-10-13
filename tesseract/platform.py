@@ -29,8 +29,8 @@ STUDIOS = (
     {
         "id": "coder",
         "title": "Coder",
-        "goal": "Ollama Cloud coder for the files behind the solid",
-        "blurb": "Read the source the dots stand for and propose a fix with a cloud model.",
+        "goal": "4D-Lens coder for the files behind the solid",
+        "blurb": "Read the 4D spatiotemporal lens and the source behind the dots to propose a fix locally or in the cloud.",
     },
     {
         "id": "smear",

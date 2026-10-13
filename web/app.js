@@ -478,10 +478,10 @@ async function loadModels() {
   if (preferred && [...select.options].some((option) => option.value === preferred)) {
     select.value = preferred;
   }
-  status.className = payload.key_set ? "" : "error";
+  status.className = "";
   status.textContent = payload.key_set
     ? "Cloud key is set for this session."
-    : "Paste an Ollama Cloud API key. Create one under Settings → API keys on ollama.com.";
+    : "Local 4D-Lens & local Ollama models work for free. Paste an Ollama Cloud key only if you want cloud models.";
 }
 
 async function askCoder(question) {

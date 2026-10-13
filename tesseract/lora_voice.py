@@ -14,11 +14,60 @@ import numpy as np
 import torch
 
 from tesseract.character import grounded_answer
-from tesseract.life import load_iris, rasterize
+from tesseract.codeblock import SCULPTURES, ambient_sculpture, rasterize_repo
+from tesseract.coder import SYSTEM as CODER_SYSTEM, fourd_code_lens, grounded_code_review
+from tesseract.life import load_iris, rasterize, repo_root
+from tesseract.risk import report as risk_report
 from tesseract.train import load_checkpoint, make_cache, pick_device, volumes_to_torch
 from tesseract.voice_text import CHARACTER_QUESTIONS, CHARACTER_SYSTEM, QUERY_TEXT, SYSTEM, answer_for, character_query
 
 CHARACTER_SYSTEM_PROMPT = CHARACTER_SYSTEM
+CODE_QUESTIONS = (
+    "Where is the next bug likely to land in this 4D code solid, and why?",
+    "Describe the 4D spatiotemporal lens of this codebase.",
+    "Which files co-mutate along time, and where do fix filaments persist?",
+    "What is the highest-risk hotspot in this solid, and how should it be patched?",
+)
+
+
+def code_examples(
+    shape: tuple[int, int, int, int],
+    rng: np.random.Generator,
+    n_sculptures: int = 4,
+    include_self_repo: bool = True,
+) -> tuple[list[np.ndarray], list[dict], list[tuple[int, str, str, str]]]:
+    """Build 4D code solids and `(solid_offset, system, query, answer)` rows for LoRA coding."""
+    volumes: list[np.ndarray] = []
+    metas: list[dict] = []
+    rows: list[tuple[int, str, str, str]] = []
+    root = repo_root()
+    if include_self_repo and (root / ".git").exists():
+        try:
+            vol, _inv, meta = rasterize_repo(root, shape, max_commits=120)
+            volumes.append(vol)
+            metas.append(meta)
+        except Exception:  # noqa: BLE001
+            pass
+    sculpture_keys = list(SCULPTURES)
+    for idx in range(n_sculptures):
+        kind = sculpture_keys[idx % len(sculpture_keys)]
+        vol, _inv, meta = ambient_sculpture(kind, shape, seed=int(rng.integers(0, 10_000)))
+        volumes.append(vol)
+        metas.append(meta)
+    for local_idx, (vol, meta) in enumerate(zip(volumes, metas)):
+        raw = risk_report(vol, meta, None, top=6)
+        spots = raw.get("hotspots") or []
+        lens = fourd_code_lens(vol, meta, spots)
+        src_root = root if meta.get("kind") == "repo" else None
+        for question in CODE_QUESTIONS:
+            answer, _files = grounded_code_review(meta, src_root, question, lens, spots, None)
+            rows.append((local_idx, CODER_SYSTEM, question, answer))
+        for _ in range(2):
+            t = float(np.round(rng.uniform(0.1, 0.95), 2))
+            q = CHARACTER_QUESTIONS[int(rng.integers(0, len(CHARACTER_QUESTIONS)))]
+            sys_prompt = CHARACTER_SYSTEM.format(name=meta.get("name", "the code solid"), t=t)
+            rows.append((local_idx, sys_prompt, character_query(t, q), grounded_answer(meta, t, q)))
+    return volumes, metas, rows
 
 
 def character_examples(metas: list[dict], per_life: int, rng: np.random.Generator) -> list[tuple[int, str, str, str]]:
@@ -180,7 +229,13 @@ def train_voice(
     volumes[0] = iris_volume
     metas[0] = iris_meta
     metas[0]["invariants"] = iris_inv.tolist()
-    print(f"encoding {len(volumes)} lives into block latents", flush=True)
+    rng = np.random.default_rng(seed)
+    code_vols, _code_metas, code_rows = code_examples(
+        cfg.shape, rng, n_sculptures=max(2, min(4, cache // 2)), include_self_repo=True
+    )
+    code_offset = len(volumes)
+    volumes.extend(code_vols)
+    print(f"encoding {len(volumes)} solids (lives + 4D code blocks) into block latents", flush=True)
     latents = precompute_latents(encoder, volumes, device, batch_size=max(1, min(2, lm_batch)))
     encoder.to("cpu")
     language, tokenizer = _load_language_model(model_name)
@@ -191,8 +246,8 @@ def train_voice(
     plain = [(index, key) for index in range(len(metas)) for key in QUERY_TEXT]
     plain.extend((0, key) for _ in range(3) for key in QUERY_TEXT)
     examples = [(index, SYSTEM, QUERY_TEXT[key], answer_for(metas[index], key)) for index, key in plain]
-    rng = np.random.default_rng(seed)
     examples.extend(character_examples(metas, character_per_life, rng))
+    examples.extend((code_offset + idx, sys_p, q, ans) for idx, sys_p, q, ans in code_rows)
     opt = torch.optim.AdamW(
         [
             {"params": bridge.parameters(), "lr": lr_bridge},

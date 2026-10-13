@@ -178,6 +178,12 @@ def hotspots(volume: np.ndarray, meta: dict, risk: np.ndarray, top: int = 12) ->
     return {"files": ranked_files[:top], "hotspots": ranges[:top]}
 
 
+def hotspot_table(volume: np.ndarray, meta: dict, risk: np.ndarray | None = None, top: int = 12) -> list[dict]:
+    """Return the ranked list of hotspot line ranges at the newest slice."""
+    field = geometric_risk(volume) if risk is None else risk
+    return hotspots(volume, meta, field, top=top)["hotspots"]
+
+
 def report(volume: np.ndarray, meta: dict, model=None, top: int = 12) -> dict:
     """Risk map, ranked files and lines, and a backtest on this history's own fixes."""
     patch = model.cfg.patch if model is not None else 4
@@ -334,7 +340,7 @@ def main() -> None:
     train = sub.add_parser("train")
     train.add_argument("repos", nargs="*")
     train.add_argument("--gallery", nargs="*", default=[], help="Gallery sculptures to clone and train on")
-    train.add_argument("--config", default="repo", choices=("tiny", "repo", "a100"))
+    train.add_argument("--config", default="repo", choices=("tiny", "repo", "rtx16gb", "a100"))
     train.add_argument("--init", default=None, help="Start from an existing checkpoint of the same shape")
     train.add_argument("--steps", type=int, default=300)
     train.add_argument("--batch", type=int, default=2)

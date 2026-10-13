@@ -283,7 +283,7 @@ def pick_device(name: str) -> torch.device:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Pretrain a 4D block model")
-    parser.add_argument("--config", default="tiny", choices=("tiny", "repo", "a100"))
+    parser.add_argument("--config", default="tiny", choices=("tiny", "repo", "rtx16gb", "a100"))
     parser.add_argument("--steps", type=int, default=40)
     parser.add_argument("--batch", type=int, default=2)
     parser.add_argument("--cache", type=int, default=8)
