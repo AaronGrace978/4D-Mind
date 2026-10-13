@@ -24,11 +24,15 @@ def cell(kind, source):
 cells = []
 
 cells.append(cell("markdown", """
-# 4D Block Mind
+# 4D Block Mind & 4D-Lens Coder
 
-A life is one solid. This notebook pretrains a non-causal 4D transformer on spacetime volumes, fine-tunes it onto Iris, trains a causal witness, then LoRA-tunes Qwen so the block latent is its sense organ.
+A life or a codebase is one 4D solid `(t, z, y, x)`. This notebook:
+1. Pretrains a non-causal **4D Eternalist Transformer** on spacetime volumes.
+2. Fine-tunes it onto **Iris** and trains a **causal witness** twin.
+3. Rasterizes a Git repository into a **4D Code Solid** `(t=commit, z=indentation, y=line, x=file)`, trains the **causal future-fix risk head**, and runs the **4D Spatiotemporal Code Lens** (worldlines, cross-file co-churn coupling, and temporal fracture slices).
+4. **LoRA-tunes DeepSeek-Coder or Qwen** so the 8 soft-prompt tokens from the 4D block encoder act as a direct 4D sense organ for both life and code.
 
-Use a Colab Pro **A100** runtime with high RAM, then **Runtime > Run all**. Set `PRESET` to `session` for one sitting or `long` for a longer pretrain. Weights go to `MyDrive/4d-mind/`.
+Works on a Colab **A100**, a free Colab **T4**, or locally on an **RTX 5060 Ti (16 GB)** (`rtx16gb` preset). Set `PRESET` to `session` for one sitting or `long` for a longer pretrain, and `MODEL_FAMILY` to `"deepseek"`, `"qwen-coder"`, or `"qwen"`. Weights go to `MyDrive/4d-mind/`.
 
 With `RESUME = True`, a stage whose checkpoint is already on Drive is skipped. After a disconnect or a restart, Run all picks up where it stopped.
 """))
@@ -37,12 +41,12 @@ cells.append(cell("code", """
 import torch
 
 if not torch.cuda.is_available():
-    raise SystemExit("Select a GPU runtime. This notebook trains on an A100.")
+    raise SystemExit("Select a GPU runtime. This notebook trains on an A100, T4, or local 16 GB RTX GPU.")
 name = torch.cuda.get_device_name(0)
 vram_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
 print(f"{name}  {vram_gb:.1f} GB")
-if "A100" not in name:
-    print("This preset is tuned for an A100. A smaller GPU may need batch 1 and can run out of memory.")
+if "A100" not in name and vram_gb < 24:
+    print("16 GB / T4 GPU detected: automatically using the rtx16gb 4D block preset (512 tokens, gradient checkpointing).")
 """))
 
 cells.append(cell("code", """
@@ -127,19 +131,20 @@ for path in sorted(OUT.iterdir()):
 """))
 
 cells.append(cell("code", """
-PRESET = "session"  # or "long"
-RESUME = True       # skip a stage whose checkpoint is already on Drive
+PRESET = "session"         # or "long"
+MODEL_FAMILY = "deepseek"  # "deepseek" (DeepSeek-Coder), "qwen-coder" (Qwen2.5-Coder), or "qwen" (Qwen2.5-Instruct)
+RESUME = True              # skip a stage whose checkpoint is already on Drive
 
 import torch
-from tesseract.config import a100, a100_runtime
+from tesseract.config import a100, a100_runtime, preset
 
 mem_kb = int(open("/proc/meminfo").read().split("MemTotal:")[1].split()[0])
 ram_gb = mem_kb / 1024**2
-runtime = a100_runtime(vram_gb, ram_gb, PRESET)
-cfg = a100()
+runtime = a100_runtime(vram_gb, ram_gb, PRESET, family=MODEL_FAMILY)
+cfg = preset(runtime["block_config"]) if runtime.get("block_config") else a100()
 device = torch.device("cuda")
-print("preset", PRESET, " resume", RESUME)
-print("language model", runtime["language_model"])
+print("preset", PRESET, " family", MODEL_FAMILY, " resume", RESUME)
+print("block config", runtime.get("block_config", "a100"), " language model", runtime["language_model"])
 print("batch", runtime["batch"], " cache", runtime["cache"], " steps", runtime["steps"])
 print("volume", cfg.shape, " dim", cfg.dim, " depth", cfg.depth, f" RAM {ram_gb:.0f} GB")
 
@@ -318,9 +323,75 @@ del preview_volume
 """))
 
 cells.append(cell("markdown", """
-## LoRA voice
+## 4D Code Solid, Risk Head & 4D-Lens Coder
 
-The encoder stays frozen. Its latent becomes eight soft-prompt tokens, and LoRA adapts Qwen so those tokens carry the solid. Targets are sentences built from the simulator's measurements, not a costume prompt.
+Every Git repository is also a 4D solid `(t=commit, z=indentation, y=line, x=file)` with five channels:
+- **occupancy**: code lines
+- **tissue**: `def` / `class` / `fn` / `struct` structural bones
+- **affect**: commit churn (`git show` diffs)
+- **scar**: bug-fix filaments (`fix` / `bug` / `patch` / `crash` commits) that persist forward in `t`
+- **other**: commits authored by other contributors
+
+Here we rasterize this repository (and built-in architectural sculptures), train the **causal future-fix risk head** (`train_risk`), and run the **4D Spatiotemporal Code Lens** (`fourd_code_lens`) to expose file worldlines, cross-file co-churn coupling, and temporal fracture slices.
+"""))
+
+cells.append(cell("code", """
+from pathlib import Path
+import matplotlib.pyplot as plt
+
+from tesseract.codeblock import ambient_sculpture, rasterize_repo
+from tesseract.coder import fourd_code_lens, grounded_code_review
+from tesseract.eval import evaluate_risk
+from tesseract.gradio_app import render_projection, render_risk_map
+from tesseract.risk import geometric_risk, hotspot_table, train_risk
+from tesseract.train import load_checkpoint
+
+REPO_TO_SCAN = Path(TARGET)
+code_vol, code_inv, code_meta = rasterize_repo(REPO_TO_SCAN, cfg.shape)
+sculptures = [ambient_sculpture(sid, cfg.shape, seed=cfg.seed + idx)[0] for idx, sid in enumerate(("linux", "doom", "git", "cpython"))]
+
+if not done("risk_head.pt"):
+    risk_model, _, _ = load_checkpoint(OUT / "iris_resident.pt", device)
+    train_risk(
+        risk_model,
+        [code_vol] + sculptures,
+        steps=max(40, runtime["steps"]["finetune"] // 2),
+        lr=2e-3,
+        device=device,
+        out_path=OUT / "risk_head.pt",
+        seed=cfg.seed,
+        log_every=20,
+    )
+    del risk_model
+    torch.cuda.empty_cache()
+
+risk_model, _, _ = load_checkpoint(OUT / "risk_head.pt", device)
+risk_scores = evaluate_risk(risk_model, [code_vol] + sculptures[:2], device)
+print("4D causal fix-risk evaluation:", json.dumps(risk_scores, indent=2))
+del risk_model
+torch.cuda.empty_cache()
+
+risk_field = geometric_risk(code_vol)
+code_hotspots = hotspot_table(code_vol, code_meta, risk_field)
+code_lens = fourd_code_lens(code_vol, code_meta, hotspots=code_hotspots)
+print("\\n" + code_lens["summary"])
+
+fig, axes = plt.subplots(1, 2, figsize=(11, 4.6))
+axes[0].imshow(render_projection(code_vol, 24))
+axes[0].set_title(f"{code_meta['name']} — 4D Code Worldtube (t rotated 24° into x)")
+axes[1].imshow(render_risk_map(code_vol, code_meta))
+axes[1].set_title("Causal Fix-Risk Field (commit t × file x)")
+for axis in axes:
+    axis.axis("off")
+fig.tight_layout()
+fig.savefig(OUT / "code_4d_lens.png", dpi=120)
+plt.show()
+"""))
+
+cells.append(cell("markdown", """
+## LoRA voice (Life + 4D Code Solids)
+
+The 4D encoder stays frozen. Its latent becomes eight soft-prompt tokens, and LoRA adapts DeepSeek-Coder or Qwen so those tokens carry both life solids (Iris) and 4D repository solids (`code_examples`). Targets are grounded measurements of the 4D block, not a costume prompt.
 """))
 
 cells.append(cell("code", """
@@ -349,9 +420,31 @@ torch.cuda.empty_cache()
 """))
 
 cells.append(cell("markdown", """
-## Look
+## Ask the 4D-Lens Coder
 
-Rotate time into x, cut the block, and ask. The resident answers from the whole solid. The witness answers from the causal twin, pooled only up to the cut.
+Now the model holds the repository's 4D block latent directly in its soft-prompt prefix and combines it with the 4D Spatiotemporal Code Lens (`worldlines`, `coupled_pairs`, `fracture_slices`, and `hotspots`) to diagnose architectural fractures and propose fixes.
+"""))
+
+cells.append(cell("code", """
+from tesseract.coder import grounded_code_review
+
+audit, _ = grounded_code_review(
+    code_meta,
+    REPO_TO_SCAN,
+    "Which files co-mutate along the commit axis t, where are the highest future-fix risk regions, and how should we decouple them?",
+    lens=code_lens,
+    hotspots=code_hotspots,
+    focus=code_hotspots[0]["file"] if code_hotspots else None,
+)
+print(audit)
+"""))
+
+cells.append(cell("markdown", """
+## Look & Code (Gradio Instrument)
+
+Two interactive tabs:
+1. **Resident & Witness (Iris)**: Rotate time into x, cut the block, and ask. The resident answers from the whole solid; the witness answers from the causal twin, pooled only up to the cut.
+2. **4D Code Lens & Coder**: Point at any Git checkout or built-in sculpture (`linux`, `doom`, `git`, `cpython`), inspect its 4D Code Worldtube and Causal Fix-Risk Field, and ask the 4D LoRA voice + Grounded 4D Coder to refactor or fix bugs from a 4D lens.
 
 Open the `https://....gradio.live` link the cell prints. Colab also offers a `*.prod.colab.dev` address for port 7860, and that page returns 404.
 """))

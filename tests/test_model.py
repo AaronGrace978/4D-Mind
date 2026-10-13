@@ -1,8 +1,9 @@
+import numpy as np
 import torch
 
-from tesseract.config import a100, a100_runtime, tiny
+from tesseract.config import a100, a100_runtime, preset, rtx16gb, tiny
 from tesseract.geom import rotate_xt
-from tesseract.lora_voice import attach_soft_prompts, labels_from_prompt_lens
+from tesseract.lora_voice import attach_soft_prompts, code_examples, labels_from_prompt_lens
 from tesseract.model import Eternalist
 
 
@@ -15,6 +16,29 @@ def test_a100_preset_token_count_and_runtime():
     assert runtime["steps"]["pretrain"] < a100_runtime(80, 80, "long")["steps"]["pretrain"]
     big = a100_runtime(80, 80, "session")
     assert "7B" in big["language_model"]
+
+    # 16 GB RTX 5060 Ti / Colab T4 runtime and DeepSeek-Coder family
+    cfg_16 = rtx16gb()
+    tokens_16 = (cfg_16.t // cfg_16.patch) * (cfg_16.d // cfg_16.patch) * (cfg_16.h // cfg_16.patch) * (cfg_16.w // cfg_16.patch)
+    assert tokens_16 == 2048
+    assert cfg_16.dim == 384 and cfg_16.depth == 6
+    assert preset("5060ti").shape == cfg_16.shape
+    rt_16_ds = a100_runtime(16, 32, "session", family="deepseek")
+    assert rt_16_ds["block_config"] == "rtx16gb"
+    assert "deepseek-coder" in rt_16_ds["language_model"]
+    rt_40_ds = a100_runtime(40, 80, "session", family="deepseek")
+    assert "deepseek-coder-6.7b" in rt_40_ds["language_model"]
+
+
+def test_code_examples_build_4d_repo_and_sculpture_targets():
+    cfg = tiny()
+    rng = np.random.default_rng(7)
+    volumes, metas, rows = code_examples(cfg.shape, rng, n_sculptures=2, include_self_repo=True)
+    assert len(volumes) >= 2
+    assert volumes[0].shape == cfg.shape + (5,)
+    assert metas[0]["kind"] in {"repo", "sculpture"}
+    assert len(rows) >= 6
+    assert any("4D" in answer or "worldline" in answer.lower() or "slice" in answer.lower() for _idx, _sys, _q, answer in rows)
 
 
 def test_patchify_roundtrip_and_soft_prompt_shape():
