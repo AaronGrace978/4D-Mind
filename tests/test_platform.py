@@ -83,7 +83,7 @@ def test_platform_studios_and_apis(monkeypatch):
     monkeypatch.delenv("FOURD_MIND_RESIDENT_CKPT", raising=False)
     monkeypatch.delenv("FOURD_MIND_LLM_URL", raising=False)
     platform = catalog()
-    assert platform["version"] == "1.1.0"
+    assert platform["version"] == "1.2.0"
     assert [studio["id"] for studio in platform["studios"]] == ["sculpt", "scan", "resident", "coder", "smear"]
     server, world = make_server("127.0.0.1", 0, shape=(8, 8, 16, 16), sculpture="doom")
     thread = threading.Thread(target=server.serve_forever, daemon=True)

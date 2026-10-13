@@ -142,3 +142,61 @@ def test_fourd_code_lens_and_grounded_coder_need_no_api_key(tmp_path: Path):
     assert local_seen["model"] == "local:deepseek-coder-v2:16b"
     assert "4D Spatiotemporal Code Lens" in local_seen["user"]
     assert "Decouple" in local_reply["reply"]
+
+
+def test_ablation_lens_and_self_validating_harness(tmp_path: Path):
+    import subprocess
+    from tesseract.codeblock import ambient_sculpture
+    from tesseract.coder import ablation_lens, run_harness, topology_metrics
+
+    volume, _inv, meta = ambient_sculpture("doom", (8, 8, 16, 16), seed=5)
+    ablation = ablation_lens(volume, meta, cut_t=0.4)
+    assert "4D Ablation Lens" in ablation["summary"]
+    assert 0.0 <= ablation["ablation_gain"] <= 1.0
+    topo = topology_metrics(volume)
+    assert set(topo.keys()) == {"mean_risk", "peak_risk", "indent_load", "scar_load"}
+
+    # Build a small git repo with a passing test, then test read, patch+auto_verify, and rollback_on_fail
+    repo = tmp_path / "app"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    (repo / "test_calc.py").write_text(
+        "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+        encoding="utf-8",
+    )
+
+    read_res = run_harness(repo, action="read", file="calc.py")
+    assert read_res["ok"] is True
+    assert "def add" in read_res["content"]
+
+    # Valid refactor that passes pytest
+    patch_ok = run_harness(
+        repo,
+        action="patch",
+        file="calc.py",
+        find_text="return a + b",
+        replace_text="return int(a) + int(b)",
+        auto_verify=True,
+        rollback_on_fail=True,
+    )
+    assert patch_ok["ok"] is True
+    assert patch_ok["rolled_back"] is False
+    assert "PASSED" in patch_ok["output"]
+    assert "int(a)" in (repo / "calc.py").read_text(encoding="utf-8")
+
+    # Broken refactor that fails pytest and automatically rolls back
+    patch_bad = run_harness(
+        repo,
+        action="patch",
+        file="calc.py",
+        find_text="return int(a) + int(b)",
+        replace_text="return a - b",
+        auto_verify=True,
+        rollback_on_fail=True,
+    )
+    assert patch_bad["ok"] is False
+    assert patch_bad["rolled_back"] is True
+    assert "rolled back" in patch_bad["output"]
+    assert "return int(a) + int(b)" in (repo / "calc.py").read_text(encoding="utf-8")
+

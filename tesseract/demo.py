@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from tesseract.character import Resident, voice_from_env
 from tesseract.codeblock import SCULPTURES, file_at, hold_sculpture, repo_probe_sentence, rasterize_repo
-from tesseract.coder import CoderError, ask as ask_coder
+from tesseract.coder import CoderError, ablation_lens, ask as ask_coder, fourd_code_lens, run_harness, topology_metrics
 from tesseract.ollama_cloud import api_key, default_model, fallback_models, list_local_models, list_models
 from tesseract.life import SMEAR_KINDS, load_iris, load_npz, media_probe_sentence, rasterize, rasterize_smear
 from tesseract.platform import catalog
@@ -256,6 +256,71 @@ class BlockWorld:
         self.coder_chat = self.coder_chat[-12:]
         return reply
 
+    def lens_payload(self, focus: str | None = None, cut_t: float = 0.5) -> dict:
+        with self.lock:
+            meta = self.meta
+            volume = self.volume
+            source = self.source
+            risk_model = self.model
+        hotspots: list[dict] = []
+        if meta.get("kind") in {"repo", "sculpture"}:
+            from tesseract.risk import report
+
+            raw = report(volume, meta, risk_model)
+            raw.pop("risk", None)
+            hotspots = raw.get("hotspots") or []
+        lens = fourd_code_lens(volume, meta, hotspots, focus)
+        lens["ablation"] = ablation_lens(volume, meta, cut_t=cut_t)
+        lens["topology"] = topology_metrics(volume) if meta.get("kind") in {"repo", "sculpture"} else {}
+        lens["has_source"] = source is not None and meta.get("kind") == "repo"
+        lens["root"] = str(source) if source is not None else ""
+        return lens
+
+    def harness_payload(
+        self,
+        action: str,
+        file: str | None = None,
+        find_text: str | None = None,
+        replace_text: str | None = None,
+        auto_verify: bool = True,
+        rollback_on_fail: bool = False,
+    ) -> dict:
+        with self.lock:
+            source = self.source
+            meta = self.meta
+            before_vol = self.volume
+        if source is None or meta.get("kind") != "repo":
+            raise CoderError("Hold a local git repository folder to use the workspace harness.")
+        before_topo = topology_metrics(before_vol)
+        result = run_harness(
+            source,
+            action=action,
+            file=file,
+            find_text=find_text,
+            replace_text=replace_text,
+            auto_verify=auto_verify,
+            rollback_on_fail=rollback_on_fail,
+        )
+        if action == "patch" and result.get("patched", result.get("ok")):
+            self.load(repo=str(source))
+            with self.lock:
+                after_topo = topology_metrics(self.volume)
+            delta_risk = round(after_topo["mean_risk"] - before_topo["mean_risk"], 4)
+            delta_indent = round(after_topo["indent_load"] - before_topo["indent_load"], 4)
+            result["topology"] = {
+                "before": before_topo,
+                "after": after_topo,
+                "delta_mean_risk": delta_risk,
+                "delta_indent_load": delta_indent,
+            }
+            result["output"] = (
+                f"{result['output']}\n"
+                f"4D Self-Validating Topology: mean risk {before_topo['mean_risk']:.4f} -> {after_topo['mean_risk']:.4f} "
+                f"(Δ {delta_risk:+.4f}), z-indent load {before_topo['indent_load']:.4f} -> {after_topo['indent_load']:.4f} "
+                f"(Δ {delta_indent:+.4f})."
+            )
+        return result
+
 
 def _read_json(handler: SimpleHTTPRequestHandler) -> dict:
     length = int(handler.headers.get("Content-Length", "0"))
@@ -286,6 +351,15 @@ def make_handler(world: BlockWorld):
                 return
             if parsed.path == "/api/models":
                 self._json(world.models_payload())
+                return
+            if parsed.path == "/api/lens":
+                query = parse_qs(parsed.query)
+                focus = (query.get("file", [""])[0] or "").strip() or None
+                try:
+                    cut_t = float(query.get("cut_t", ["0.5"])[0])
+                except ValueError:
+                    cut_t = 0.5
+                self._json(world.lens_payload(focus=focus, cut_t=cut_t))
                 return
             if parsed.path == "/api/probe":
                 query = parse_qs(parsed.query)
@@ -346,6 +420,22 @@ def make_handler(world: BlockWorld):
                     return
                 except RuntimeError as exc:
                     self._json({"error": str(exc)}, status=502)
+                    return
+                self._json(payload)
+                return
+            if path == "/api/coder/harness":
+                try:
+                    request = _read_json(self)
+                    payload = world.harness_payload(
+                        action=str(request.get("action", "pytest")),
+                        file=str(request.get("file") or "").strip() or None,
+                        find_text=request.get("find_text"),
+                        replace_text=request.get("replace_text"),
+                        auto_verify=bool(request.get("auto_verify", True)),
+                        rollback_on_fail=bool(request.get("rollback_on_fail", False)),
+                    )
+                except CoderError as exc:
+                    self._json({"error": str(exc)}, status=400)
                     return
                 self._json(payload)
                 return

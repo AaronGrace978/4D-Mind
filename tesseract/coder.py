@@ -13,6 +13,9 @@ opens the checkout those dots were rasterized from, and answers with:
 
 from __future__ import annotations
 
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -245,6 +248,102 @@ def fourd_code_lens(
     }
 
 
+def ablation_lens(volume: np.ndarray | None, meta: dict, cut_t: float = 0.5) -> dict:
+    """Compare the Eternalist 4D block view (full t) against a Causal 3D witness truncated at `cut_t`.
+
+    Measures what the non-causal 4D block knows about the repository's future evolution
+    (future fix-scars that open after `cut_t`, late-stage co-churn coupling, and structural
+    worldline survival) that a causal witness standing at `cut_t` cannot see.
+    """
+    files = list(meta.get("files") or [])
+    bands = list(meta.get("bands") or [])
+    if volume is None or volume.ndim != 5 or not files or not bands:
+        return {
+            "cut_t": round(float(cut_t), 2),
+            "blind_future_scars": [],
+            "hidden_couplings": [],
+            "ablation_gain": 0.0,
+            "summary": "4D Ablation Lens: hold a repository or sculpture solid to compare Eternalist vs Causal views.",
+        }
+    t_size = volume.shape[0]
+    cut_bin = max(1, min(t_size - 1, int(round(float(cut_t) * (t_size - 1)))))
+    causal_vol = volume[:cut_bin]
+    future_vol = volume[cut_bin:]
+
+    blind_future_scars: list[dict] = []
+    for name, band in zip(files, bands):
+        x0, x1 = int(band[0]), int(band[1])
+        early_scar = float((causal_vol[:, :, :, x0:x1, SCAR] > 0.3).mean())
+        late_scar = float((future_vol[:, :, :, x0:x1, SCAR] > 0.3).mean())
+        late_churn = float(future_vol[:, :, :, x0:x1, AFFECT].mean())
+        delta = late_scar - early_scar
+        if delta > 0.005 or late_scar > 0.02:
+            blind_future_scars.append(
+                {
+                    "file": name,
+                    "causal_scar": round(early_scar, 4),
+                    "eternalist_future_scar": round(late_scar, 4),
+                    "future_churn": round(late_churn, 4),
+                    "blind_delta": round(delta, 4),
+                }
+            )
+    blind_future_scars.sort(key=lambda item: (-item["blind_delta"], -item["eternalist_future_scar"]))
+
+    full_lens = fourd_code_lens(volume, meta)
+    causal_lens = fourd_code_lens(causal_vol, meta)
+    causal_pair_set = {tuple(p["files"]) for p in causal_lens.get("coupled_pairs", [])}
+    hidden_couplings = [
+        p for p in full_lens.get("coupled_pairs", []) if tuple(p["files"]) not in causal_pair_set
+    ]
+    total_early = float((causal_vol[..., SCAR] > 0.3).mean())
+    total_full = float((volume[..., SCAR] > 0.3).mean())
+    gain = round(max(0.0, total_full - total_early) / max(total_full, 1e-6), 3)
+
+    lines = [
+        f"4D Ablation Lens (Eternalist Full Block vs Causal Witness stopped at t={cut_t:.2f}, slice {cut_bin}/{t_size}):",
+        f"- Non-causal 4D foresight gain over causal witness: {gain:.0%} of fix-scar structure lies beyond the causal horizon.",
+    ]
+    if blind_future_scars:
+        top_b = ", ".join(
+            f"{b['file']} (causal scar {b['causal_scar']:.1%} -> future scar {b['eternalist_future_scar']:.1%})"
+            for b in blind_future_scars[:3]
+        )
+        lines.append(f"- Future fix-scars invisible to causal witness at t={cut_t:.2f}: {top_b}")
+    if hidden_couplings:
+        top_h = ", ".join(f"{p['files'][0]} <-> {p['files'][1]} ({p['coupling']:.0%})" for p in hidden_couplings[:2])
+        lines.append(f"- Emergent cross-file couplings after t={cut_t:.2f}: {top_h}")
+
+    return {
+        "cut_t": round(float(cut_t), 2),
+        "cut_bin": cut_bin,
+        "t_size": t_size,
+        "blind_future_scars": blind_future_scars[:5],
+        "hidden_couplings": hidden_couplings[:4],
+        "ablation_gain": gain,
+        "summary": "\n".join(lines),
+    }
+
+
+def topology_metrics(volume: np.ndarray) -> dict:
+    """Compact 4D topological health metrics for before/after refactor verification."""
+    from tesseract.risk import geometric_risk
+
+    field = geometric_risk(volume)
+    latest_occ = volume[-1, ..., OCC] > 0.3
+    latest_risk = float(np.where(latest_occ, field[-1], 0.0).mean())
+    max_risk = float(np.where(latest_occ, field[-1], 0.0).max()) if latest_occ.any() else 0.0
+    z_depth = volume.shape[1]
+    z_weights = np.linspace(0.0, 1.0, z_depth, dtype=np.float32)[:, None, None]
+    indent_load = float((volume[-1, ..., OCC] * z_weights).sum() / max(volume[-1, ..., OCC].sum(), 1e-6))
+    scar_load = float((volume[-1, ..., SCAR] > 0.3).mean())
+    return {
+        "mean_risk": round(latest_risk, 4),
+        "peak_risk": round(max_risk, 4),
+        "indent_load": round(indent_load, 4),
+        "scar_load": round(scar_load, 4),
+    }
+
+
 def grounded_code_review(
     meta: dict,
     root: Path | None,
@@ -361,3 +460,115 @@ def ask(
     )
     text = chat(chosen, [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}], key)
     return {"text": text, "reply": text, "model": chosen, "files": files, "lens": lens}
+
+
+HARNESS_COMMANDS: dict[str, list[str]] = {
+    "pytest": [sys.executable, "-m", "pytest", "-q"],
+    "git_status": ["git", "status", "-s"],
+    "git_diff": ["git", "diff", "--stat"],
+    "cargo_check": ["cargo", "check"],
+    "npm_test": ["npm", "test"],
+}
+
+
+def run_harness(
+    root: Path | None,
+    action: str = "pytest",
+    file: str | None = None,
+    find_text: str | None = None,
+    replace_text: str | None = None,
+    auto_verify: bool = True,
+    rollback_on_fail: bool = False,
+    verify_action: str = "pytest",
+    timeout: int = 30,
+) -> dict:
+    """Local workspace harness for building, testing, and self-validating patches inside the held checkout."""
+    if root is None or not root.is_dir():
+        raise CoderError("Hold a local git repository checkout before running the workspace harness.")
+    root = root.resolve()
+    action = (action or "").strip().lower()
+
+    if action == "read":
+        rel = (file or "").strip()
+        if not rel:
+            raise CoderError("Specify a relative file path inside the checkout to read.")
+        target = _inside(root, rel)
+        if target is None:
+            raise CoderError(f"Refusing path outside checkout or missing file: {rel}")
+        content = target.read_text(encoding="utf-8", errors="replace")
+        return {
+            "action": "read",
+            "file": rel,
+            "ok": True,
+            "returncode": 0,
+            "content": content,
+            "output": f"Loaded {rel} ({len(content.splitlines())} lines).",
+        }
+
+    if action == "patch":
+        rel = (file or "").strip()
+        if not rel:
+            raise CoderError("Specify a relative file path inside the checkout to patch.")
+        target = _inside(root, rel)
+        if target is None:
+            raise CoderError(f"Refusing path outside checkout or missing file: {rel}")
+        if not find_text:
+            raise CoderError("Provide the exact snippet (`find_text`) to replace.")
+        current = target.read_text(encoding="utf-8")
+        if find_text not in current:
+            raise CoderError(f"`find_text` was not found in {rel}.")
+        updated = current.replace(find_text, replace_text or "", 1)
+        target.write_text(updated, encoding="utf-8")
+        patch_msg = f"Patched {rel} ({len(find_text)} chars -> {len(replace_text or '')} chars)."
+        verification = None
+        rolled_back = False
+        if auto_verify and verify_action in HARNESS_COMMANDS:
+            verification = run_harness(root, action=verify_action, auto_verify=False, timeout=timeout)
+            if not verification["ok"] and rollback_on_fail:
+                target.write_text(current, encoding="utf-8")
+                rolled_back = True
+                patch_msg += f"\nVerification ({verify_action}) FAILED — automatically rolled back {rel}."
+            elif verification["ok"]:
+                patch_msg += f"\nSelf-Validating 4D CI ({verify_action}): PASSED."
+            else:
+                patch_msg += f"\nSelf-Validating 4D CI ({verify_action}): FAILED (exit {verification['returncode']})."
+        return {
+            "action": "patch",
+            "file": rel,
+            "ok": True if verification is None else (verification["ok"] and not rolled_back),
+            "patched": not rolled_back,
+            "rolled_back": rolled_back,
+            "returncode": 0 if verification is None else verification["returncode"],
+            "verification": verification,
+            "output": patch_msg + (f"\n\n{verification['output']}" if verification else ""),
+        }
+
+    if action not in HARNESS_COMMANDS:
+        allowed = ", ".join(sorted([*HARNESS_COMMANDS.keys(), "patch", "read"]))
+        raise CoderError(f"Unknown harness action {action!r}. Allowed: {allowed}")
+
+    cmd = list(HARNESS_COMMANDS[action])
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        combined = ((proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")).strip()
+        if len(combined) > 6000:
+            combined = combined[:6000] + "\n... [truncated]"
+        return {
+            "action": action,
+            "command": " ".join(shlex.quote(part) for part in cmd),
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "output": combined or "(completed with no output)",
+        }
+    except FileNotFoundError as exc:
+        raise CoderError(f"Tool not installed on this machine for {action}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CoderError(f"Harness command {action} timed out after {timeout}s.") from exc
+
